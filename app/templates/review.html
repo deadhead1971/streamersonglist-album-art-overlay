@@ -13,31 +13,40 @@
     <p class="muted">Sync your songlist and run <strong>Bulk propose</strong> on the Songs page.</p>
   </div>
 
-  <div id="card" class="card" hidden>
-    <div class="art-wrap" id="art-wrap">
-      <img id="art" alt="artwork">
-      <div id="no-art" class="no-art" hidden>No image — try another source or upload one.</div>
-    </div>
-    <div class="meta">
-      <h2 id="song-title"></h2>
-      <div id="song-artist" class="muted big"></div>
-      <div class="badges">
-        <span id="badge-source" class="badge"></span>
-        <span id="badge-album" class="badge subtle"></span>
-        <span id="badge-cand" class="badge subtle"></span>
-        <span id="badge-sim" class="badge subtle"></span>
+  <div id="card" hidden>
+    <div class="card">
+      <div class="art-wrap" id="art-wrap">
+        <img id="art" alt="artwork">
+        <div id="no-art" class="no-art" hidden>No image selected — pick one below or upload your own.</div>
       </div>
+      <div class="meta">
+        <h2 id="song-title"></h2>
+        <div id="song-artist" class="muted big"></div>
+        <div class="badges">
+          <span id="badge-source" class="badge"></span>
+          <span id="badge-album" class="badge subtle"></span>
+          <span id="badge-sim" class="badge subtle"></span>
+        </div>
 
-      <div class="actions">
-        <button id="btn-confirm" class="primary">Confirm <kbd>Y</kbd></button>
-        <button id="btn-reject" class="secondary">Reject → next <kbd>N</kbd></button>
-        <button id="btn-skip" class="secondary">Skip <kbd>→</kbd></button>
-        <label class="upload secondary">Upload <kbd>U</kbd>
-          <input type="file" id="file" accept="image/png,image/jpeg,image/webp" hidden>
-        </label>
+        <div class="actions">
+          <button id="btn-confirm" class="primary">Confirm <kbd>Y</kbd></button>
+          <button id="btn-more" class="secondary">Find more <kbd>M</kbd></button>
+          <label class="upload secondary">Upload <kbd>U</kbd>
+            <input type="file" id="file" accept="image/png,image/jpeg,image/webp" hidden>
+          </label>
+          <button id="btn-skip" class="secondary">Skip <kbd>S</kbd></button>
+        </div>
+        <div id="dropzone" class="dropzone">Drag &amp; drop an image here to use your own</div>
+        <div id="msg" class="muted"></div>
       </div>
-      <div id="dropzone" class="dropzone">Drag &amp; drop an image here to replace</div>
-      <div id="msg" class="muted"></div>
+    </div>
+
+    <div class="gallery-section">
+      <div class="row spread">
+        <h3>All options <span class="muted">— click any to pick it (← → to browse)</span></h3>
+        <span id="gallery-count" class="muted"></span>
+      </div>
+      <div id="gallery" class="gallery"></div>
     </div>
   </div>
 </div>
@@ -45,11 +54,13 @@
 <script>
 const MODE = document.querySelector('.review').dataset.mode;
 const FILTER = MODE === 'queue' ? 'queue' : 'review';
-let queue = [];       // list of keys to review
+let queue = [];
 let pos = 0;
-let current = null;   // current entry view
+let current = null;
+let busy = false;
 
 const $ = id => document.getElementById(id);
+const esc = s => (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 async function load() {
   const r = await fetch(`{{ url_for("api_entries") }}?filter=${FILTER}`);
@@ -60,8 +71,10 @@ async function load() {
 }
 
 async function showCurrent() {
-  if (pos >= queue.length) { $('card').hidden = true; $('empty').hidden = false;
-    $('progress-count').textContent = ''; return; }
+  if (pos >= queue.length) {
+    $('card').hidden = true; $('empty').hidden = false;
+    $('progress-count').textContent = ''; return;
+  }
   const r = await fetch(`{{ url_for("api_entry") }}?key=${encodeURIComponent(queue[pos])}`);
   current = await r.json();
   paint();
@@ -72,21 +85,48 @@ function paint() {
   $('progress-count').textContent = `${pos + 1} / ${queue.length}`;
   $('song-title').textContent = current.title || '';
   $('song-artist').textContent = current.artist || '';
+
   const art = $('art'), noArt = $('no-art');
   if (current.has_image) {
     art.src = current.image_url; art.hidden = false; noArt.hidden = true;
   } else { art.hidden = true; noArt.hidden = false; }
+
   $('badge-source').textContent = current.candidate_source || current.source || 'no source';
   $('badge-album').textContent = current.candidate_album ? `album: ${current.candidate_album}` : '';
   $('badge-album').hidden = !current.candidate_album;
-  const cc = current.candidate_count;
-  $('badge-cand').textContent = cc ? `candidate ${current.candidate_index + 1}/${cc}` : '';
-  $('badge-cand').hidden = !cc;
   $('badge-sim').textContent = current.similarity != null
     ? `artist match ${Math.round(current.similarity * 100)}%` : '';
   $('badge-sim').hidden = current.similarity == null;
   $('btn-confirm').disabled = !current.has_image;
+
+  $('btn-more').disabled = current.sources_exhausted;
+  $('btn-more').textContent = current.sources_exhausted ? 'No more sources' : 'Find more';
+  if (!current.sources_exhausted) $('btn-more').innerHTML = 'Find more <kbd>M</kbd>';
+
+  paintGallery();
   $('msg').textContent = '';
+}
+
+function paintGallery() {
+  const g = $('gallery');
+  g.innerHTML = '';
+  const cands = current.candidates || [];
+  $('gallery-count').textContent = cands.length ? `${cands.length} found` : '';
+  for (const c of cands) {
+    const sel = c.index === current.candidate_index;
+    const el = document.createElement('button');
+    el.className = 'cand' + (sel ? ' sel' : '') + (c.blocklisted ? ' comp' : '');
+    el.dataset.index = c.index;
+    const cap = esc(c.source || '') + (c.album ? ' · ' + esc(c.album) : '');
+    el.innerHTML =
+      `<div class="cand-img"><img src="${esc(c.url)}" loading="lazy"
+         onerror="this.closest('.cand').classList.add('broken')"></div>
+       <span class="cand-cap" title="${cap}">${cap}</span>
+       ${c.blocklisted ? '<span class="cand-tag">comp?</span>' : ''}
+       ${sel ? '<span class="cand-check">✓</span>' : ''}`;
+    el.addEventListener('click', () => select(c.index));
+    g.appendChild(el);
+  }
 }
 
 async function post(url, body) {
@@ -95,26 +135,36 @@ async function post(url, body) {
   return r.json();
 }
 
+async function select(index) {
+  if (busy || index === current.candidate_index) return;
+  busy = true;
+  $('msg').textContent = 'Loading that option…';
+  const d = await post('{{ url_for("api_select") }}', {key: current.key, index});
+  busy = false;
+  if (d.ok) { current = d; paint(); }
+  else { $('msg').textContent = 'Could not load that one: ' + d.error; }
+}
+
+async function findMore() {
+  if (busy || current.sources_exhausted) return;
+  busy = true;
+  $('msg').textContent = 'Searching more sources…';
+  const d = await post('{{ url_for("api_more") }}', {key: current.key});
+  busy = false;
+  current = d; paint();
+  $('msg').textContent = d.added > 0 ? `Found ${d.added} more.` : 'No more options found.';
+}
+
 async function confirm() {
-  if (!current || !current.has_image) return;
+  if (!current || !current.has_image || busy) return;
   await post('{{ url_for("api_confirm") }}', {key: current.key});
   next();
-}
-async function reject() {
-  if (!current) return;
-  $('msg').textContent = 'Searching next candidate…';
-  const d = await post('{{ url_for("api_reject") }}', {key: current.key});
-  current = d;
-  if (current.status === 'rejected_all') {
-    $('msg').textContent = 'No more candidates — upload one or skip.';
-  }
-  paint();
 }
 function skip() { pos++; showCurrent(); }
 function next() { pos++; showCurrent(); }
 
 $('btn-confirm').addEventListener('click', confirm);
-$('btn-reject').addEventListener('click', reject);
+$('btn-more').addEventListener('click', findMore);
 $('btn-skip').addEventListener('click', skip);
 $('file').addEventListener('change', e => { if (e.target.files[0]) upload(e.target.files[0]); });
 
@@ -135,12 +185,26 @@ const dz = $('dropzone');
   e.preventDefault(); dz.classList.remove('over'); }));
 dz.addEventListener('drop', e => { if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); });
 
+// Browse candidates with the arrow keys, pick with Enter/Y.
+function step(delta) {
+  const cands = current.candidates || [];
+  if (!cands.length) return;
+  let i = current.candidate_index;
+  i = (i < 0 ? 0 : i + delta);
+  if (i < 0) i = 0;
+  if (i > cands.length - 1) i = cands.length - 1;
+  select(i);
+}
+
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
-  if (e.key === 'y' || e.key === 'Y') confirm();
-  else if (e.key === 'n' || e.key === 'N') reject();
-  else if (e.key === 'ArrowRight') skip();
-  else if (e.key === 'u' || e.key === 'U') $('file').click();
+  const k = e.key.toLowerCase();
+  if (k === 'y') confirm();
+  else if (k === 'm') findMore();
+  else if (k === 'u') $('file').click();
+  else if (k === 's') skip();
+  else if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
 });
 
 load();

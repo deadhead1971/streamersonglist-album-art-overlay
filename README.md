@@ -42,7 +42,7 @@ pip install -r requirements.txt
 Double-click **`run_dashboard.bat`** (or run `python -m app.dashboard`).
 
 - On the very first run it creates a `config.json` for you and opens the
-  **Settings** page in your browser at `http://127.0.0.1:5000`.
+  **Settings** page in your browser at `http://127.0.0.1:5050`.
 - Fill in:
   - **Username or songlist URL** — e.g. `yourname` or
     `https://www.streamersonglist.com/t/yourname/songs`. Click **Test connection**

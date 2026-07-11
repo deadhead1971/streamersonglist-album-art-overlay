@@ -166,6 +166,41 @@ def advance_candidate(lib, cfg: dict, entry: dict):
         i += 1  # undownloadable (e.g. CAA 404) — skip to the next
 
 
+def select_candidate(lib, entry: dict, index: int) -> dict:
+    """
+    Pick a specific already-discovered candidate by index: download it and store
+    it as the entry's (proposed) image. Lets the user jump to any option in the
+    gallery, forward or back, instead of only cycling. Raises IndexError for a
+    bad index or ValueError if the image can't be downloaded.
+    """
+    candidates = entry.get("candidates", [])
+    if not (0 <= index < len(candidates)):
+        raise IndexError("candidate index out of range")
+    cand = candidates[index]
+    raw = try_download(cand)
+    if raw is None:
+        raise ValueError("could not download candidate image")
+    store_candidate(lib, entry["title"], entry["artist"], cand,
+                    STATUS_PROPOSED, raw_bytes=raw)
+    entry["candidate_index"] = index
+    lib.save()
+    return cand
+
+
+def find_more_candidates(lib, cfg: dict, entry: dict) -> int:
+    """
+    Pull the next not-yet-tried source(s) into the entry's candidate pool until
+    at least one new candidate is found or every source is exhausted. Returns the
+    number of candidates added (0 = nothing more found).
+    """
+    before = len(entry.get("candidates", []))
+    while len(entry.get("candidates", [])) == before:
+        if not _add_next_source(entry, cfg):
+            break
+    lib.save()
+    return len(entry.get("candidates", [])) - before
+
+
 def confirm_entry(lib, entry: dict) -> None:
     lib.set_status(entry, STATUS_CONFIRMED)
     lib.save()
@@ -177,5 +212,6 @@ def store_upload(lib, entry: dict, raw_bytes: bytes) -> None:
     fname = lib.save_image_bytes(entry["title"], entry["artist"], png)
     entry["file"] = fname
     entry["source"] = "manual"
+    entry["candidate_index"] = -1  # a manual upload isn't one of the candidates
     lib.set_status(entry, STATUS_CONFIRMED)
     lib.save()

@@ -165,6 +165,20 @@ def entry_view(lib: Library, key: str, entry: dict) -> dict:
     candidates = entry.get("candidates", [])
     idx = entry.get("candidate_index", -1)
     current = candidates[idx] if 0 <= idx < len(candidates) else None
+    searched = entry.get("searched_sources", [])
+    # The gallery shows every discovered candidate by its remote image URL, so
+    # the user can pick any of them (not just cycle forward).
+    candidate_views = [
+        {
+            "index": i,
+            "url": c.get("url"),
+            "source": c.get("source"),
+            "album": c.get("album"),
+            "similarity": c.get("similarity"),
+            "blocklisted": c.get("blocklisted", False),
+        }
+        for i, c in enumerate(candidates)
+    ]
     return {
         "key": key,
         "title": entry.get("title"),
@@ -180,6 +194,8 @@ def entry_view(lib: Library, key: str, entry: dict) -> dict:
         "candidate_album": current.get("album") if current else entry.get("album"),
         "candidate_source": current.get("source") if current else entry.get("source"),
         "similarity": current.get("similarity") if current else None,
+        "candidates": candidate_views,
+        "sources_exhausted": all(s in searched for s in artwork.SOURCE_ORDER),
         "image_url": url_for("serve_image", key=key,
                              v=entry.get("updated_at", "")) if lib.has_image(entry) else None,
     }
@@ -330,16 +346,39 @@ def api_confirm():
     return jsonify({"ok": True, **entry_view(lib, key, entry)})
 
 
-@app.route("/api/reject", methods=["POST"])
-def api_reject():
+@app.route("/api/select", methods=["POST"])
+def api_select():
+    """Pick a specific candidate from the gallery (by index) as the artwork."""
+    lib = Library()
+    body = request.json or {}
+    key = body.get("key", "")
+    entry = lib.get_by_key(key)
+    if entry is None:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    try:
+        index = int(body.get("index"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "bad index"}), 400
+    try:
+        artwork.select_candidate(lib, entry, index)
+    except IndexError:
+        return jsonify({"ok": False, "error": "index out of range"}), 400
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, **entry_view(lib, key, entry)})
+
+
+@app.route("/api/more", methods=["POST"])
+def api_more():
+    """Pull the next source(s) of candidates into the gallery on demand."""
     lib = Library()
     cfg = config.load_config()
     key = (request.json or {}).get("key", "")
     entry = lib.get_by_key(key)
     if entry is None:
         return jsonify({"ok": False, "error": "not found"}), 404
-    artwork.advance_candidate(lib, cfg, entry)
-    return jsonify({"ok": True, **entry_view(lib, key, entry)})
+    added = artwork.find_more_candidates(lib, cfg, entry)
+    return jsonify({"ok": True, "added": added, **entry_view(lib, key, entry)})
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -394,7 +433,7 @@ def serve_image():
 # Entry point
 # ---------------------------------------------------------------------------
 
-def run(host="127.0.0.1", port=5000, open_browser=True):
+def run(host="127.0.0.1", port=5050, open_browser=True):
     first_run = config.ensure_config()
     if open_browser:
         target = "settings" if first_run else ""
