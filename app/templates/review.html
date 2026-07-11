@@ -54,6 +54,8 @@
 <script>
 const MODE = document.querySelector('.review').dataset.mode;
 const FILTER = MODE === 'queue' ? 'queue' : 'review';
+// ?key=… → review just that one song (re-review a pick from the Songs list).
+const SINGLE_KEY = new URLSearchParams(location.search).get('key');
 let queue = [];
 let pos = 0;
 let current = null;
@@ -63,18 +65,29 @@ const $ = id => document.getElementById(id);
 const esc = s => (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 async function load() {
-  const r = await fetch(`{{ url_for("api_entries") }}?filter=${FILTER}`);
-  queue = (await r.json()).entries.map(e => e.key);
+  if (SINGLE_KEY) {
+    queue = [SINGLE_KEY];
+  } else {
+    const r = await fetch(`{{ url_for("api_entries") }}?filter=${FILTER}`);
+    queue = (await r.json()).entries.map(e => e.key);
+  }
   pos = 0;
-  if (queue.length === 0) { $('card').hidden = true; $('empty').hidden = false; }
+  if (queue.length === 0) { $('card').hidden = true; showEmpty(); }
   else { $('empty').hidden = true; showCurrent(); }
 }
 
+function showEmpty() {
+  $('card').hidden = true;
+  $('empty').hidden = false;
+  $('progress-count').textContent = '';
+  $('empty').innerHTML = SINGLE_KEY
+    ? '<p>Done. ✓</p><p class="muted"><a href="{{ url_for("songs_page") }}">← Back to the song list</a></p>'
+    : '<p>Nothing to review here. 🎉</p><p class="muted">Sync your songlist and run '
+      + '<strong>Bulk propose</strong> on the Songs page.</p>';
+}
+
 async function showCurrent() {
-  if (pos >= queue.length) {
-    $('card').hidden = true; $('empty').hidden = false;
-    $('progress-count').textContent = ''; return;
-  }
+  if (pos >= queue.length) { showEmpty(); return; }
   const r = await fetch(`{{ url_for("api_entry") }}?key=${encodeURIComponent(queue[pos])}`);
   current = await r.json();
   paint();

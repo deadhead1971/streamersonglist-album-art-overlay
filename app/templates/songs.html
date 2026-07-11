@@ -21,7 +21,7 @@
   </div>
 
   <table class="songs">
-    <thead><tr><th>Art</th><th>Title</th><th>Artist</th><th>Status</th><th>Source</th></tr></thead>
+    <thead><tr><th>Art</th><th>Title</th><th>Artist</th><th>Status</th><th>Source</th><th></th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
 </div>
@@ -54,8 +54,10 @@ function render() {
     const thumb = r.image_url
       ? `<img class="thumb" src="${r.image_url}" alt="">`
       : `<div class="thumb empty"></div>`;
+    const reviewUrl = '{{ url_for("review_page") }}?key=' + encodeURIComponent(r.key);
     tr.innerHTML = `<td>${thumb}</td><td>${esc(r.title)}</td><td>${esc(r.artist)}</td>
-      <td>${STATUS_LABEL[r.status] || STATUS_LABEL.null}</td><td>${esc(r.source||'')}</td>`;
+      <td>${STATUS_LABEL[r.status] || STATUS_LABEL.null}</td><td>${esc(r.source||'')}</td>
+      <td><a class="review-link" href="${reviewUrl}">Review ▸</a></td>`;
     rowsEl.appendChild(tr);
   }
   document.getElementById('counts').textContent =
