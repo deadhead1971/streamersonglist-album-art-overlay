@@ -1,5 +1,7 @@
 {
   "streamersonglist_username": "",
+  "song_source": "streamersonglist",
+  "poll_interval": 10,
   "song_file": "D:\\Twitch Streaming\\current song.txt",
   "output_image": "D:\\Twitch Streaming\\current_artwork.png",
   "fallback_image": "D:\\Twitch Streaming\\default_artwork.png",

@@ -226,6 +226,12 @@ def save_settings():
     cfg["streamersonglist_username"] = songlist.extract_username(
         form.get("streamersonglist_username", "").strip()
     )
+    source = form.get("song_source", "streamersonglist").strip()
+    cfg["song_source"] = source if source in ("streamersonglist", "file") else "streamersonglist"
+    try:
+        cfg["poll_interval"] = max(2, int(form.get("poll_interval", 10)))
+    except (ValueError, TypeError):
+        cfg["poll_interval"] = 10
     cfg["song_file"] = form.get("song_file", "").strip()
     cfg["output_image"] = form.get("output_image", "").strip()
     cfg["fallback_image"] = form.get("fallback_image", "").strip()

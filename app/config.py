@@ -32,6 +32,12 @@ USER_AGENT = (
 
 DEFAULT_CONFIG = {
     "streamersonglist_username": "",
+    # Where the runtime watcher gets the current song:
+    #   "streamersonglist" (default) — poll the live queue, top slot = now playing
+    #   "file"                        — watch a text file another tool writes
+    "song_source": "streamersonglist",
+    # Seconds between SSL queue polls (only used when song_source == streamersonglist).
+    "poll_interval": 10,
     "song_file": "",
     "output_image": "",
     "fallback_image": "",

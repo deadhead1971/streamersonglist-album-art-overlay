@@ -89,3 +89,74 @@ def fetch_all_songs(streamer_id, size: int = 100) -> list:
         items.extend(page_items)
 
     return items
+
+
+# ---------------------------------------------------------------------------
+# Live queue (the runtime signal — top of the queue is the current song)
+# ---------------------------------------------------------------------------
+#
+# Verified live 2026-07-11:
+#   GET /v1/streamers/{id}/queue
+#   -> {"list":[{position, song:{title, artist, ...}, nonlistSong, ...}], "status":{...}}
+# The list is ordered top-first; list[0] is position 1 (the current/next song).
+# An empty list means nothing is queued.
+
+def fetch_queue(streamer_id) -> list:
+    """Fetch the live request queue (top-first). Returns the raw list of items."""
+    resp = requests.get(
+        f"{API_BASE}/streamers/{streamer_id}/queue",
+        headers=_HEADERS,
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("list", []) if isinstance(data, dict) else []
+
+
+def _queue_item_song(item: dict):
+    """
+    Pull (title, artist) out of one queue item. Prefers the linked library
+    ``song``; falls back to a ``nonlistSong`` (a viewer's off-list request).
+    Returns (title, artist) or None if nothing usable is present.
+    """
+    if not isinstance(item, dict):
+        return None
+
+    song = item.get("song")
+    if isinstance(song, dict):
+        title = (song.get("title") or "").strip()
+        artist = (song.get("artist") or "").strip()
+        if title:
+            return title, artist
+
+    # nonlistSong: shape isn't guaranteed by the API — handle the plausible
+    # cases (a bare "Title - Artist" string or a {title, artist} dict) and skip
+    # anything else rather than guessing.
+    nonlist = item.get("nonlistSong")
+    if isinstance(nonlist, dict):
+        title = (nonlist.get("title") or "").strip()
+        artist = (nonlist.get("artist") or "").strip()
+        if title:
+            return title, artist
+    elif isinstance(nonlist, str) and nonlist.strip():
+        text = nonlist.strip()
+        for sep in (" - ", " – ", " — "):
+            if sep in text:
+                title, artist = text.split(sep, maxsplit=1)
+                return title.strip(), artist.strip()
+        return text, ""
+
+    return None
+
+
+def fetch_current_song(streamer_id):
+    """
+    Return (title, artist) for the song at the top of the queue (position 1),
+    or None if the queue is empty / has no usable song. Raises
+    requests.RequestException on a network/HTTP failure so callers can tell a
+    transient error apart from a genuinely empty queue.
+    """
+    queue = fetch_queue(streamer_id)
+    if not queue:
+        return None
+    return _queue_item_song(queue[0])

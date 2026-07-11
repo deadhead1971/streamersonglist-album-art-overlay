@@ -1,5 +1,5 @@
 @echo off
-REM Single fetch — reads the song file once, writes the artwork, then exits.
-REM Handy for triggering per-song from TouchPortal instead of the watch loop.
+REM Single fetch — reads the current song once (SSL queue by default, or the
+REM song file if song_source is "file"), writes the artwork, then exits.
 cd /d "%~dp0"
 python -m app.watcher

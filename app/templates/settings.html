@@ -21,8 +21,27 @@
     </fieldset>
 
     <fieldset>
-      <legend>Files (used by the watcher during streams)</legend>
-      <label>Song file (what OBS/your bot writes the current song to)
+      <legend>Current song source</legend>
+      <label class="checkbox">
+        <input type="radio" name="song_source" value="streamersonglist"
+               {{ 'checked' if cfg.song_source != 'file' }}>
+        StreamerSonglist queue (recommended) — reads the song at the top of your
+        live queue. No extra setup: just your username above.
+      </label>
+      <label>Poll interval (seconds)
+        <input type="number" name="poll_interval" value="{{ cfg.poll_interval }}"
+               min="2" max="120" size="4"></label>
+      <label class="checkbox">
+        <input type="radio" name="song_source" value="file"
+               {{ 'checked' if cfg.song_source == 'file' }}>
+        Text file — watch a file another tool (bot, TouchPortal, …) writes the
+        current song to. Set the path below.
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Files</legend>
+      <label>Song file (only for the "Text file" source above)
         <input type="text" name="song_file" value="{{ cfg.song_file }}"
                placeholder="D:\Twitch Streaming\current song.txt"></label>
       <label>Output image (what OBS displays)

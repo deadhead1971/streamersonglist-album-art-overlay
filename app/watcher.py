@@ -1,8 +1,14 @@
 """
-Runtime watcher — headless, launched by a .bat from TouchPortal at stream start.
+Runtime watcher — headless, launched by a .bat at stream start.
 
-Watches ``current song.txt`` and, on change, writes ``current_artwork.png`` for
-OBS. Lookup order (changed from v2):
+Gets the current song from one of two sources (config ``song_source``) and, on
+change, writes ``current_artwork.png`` for OBS:
+  - ``streamersonglist`` (default): poll the live SSL queue; the top slot
+    (position 1) is the current song. Empty queue -> fallback image.
+  - ``file``: watch a text file (``Song - Artist``) another tool writes.
+
+Whichever the source, the resolved (song, artist) runs through the same lookup
+order (changed from v2):
   1. Parse ``Song - Artist`` from the song file.
   2. skip_artists -> fallback image (the streamer's own originals).
   3. Library lookup (confirmed, or proposed/unverified as better-than-nothing):
@@ -23,9 +29,10 @@ import sys
 import time
 from pathlib import Path
 
+import requests
 from PIL import Image
 
-from . import artwork, config, imaging, sources
+from . import artwork, config, imaging, songlist, sources
 from .library import (
     STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_REJECTED_ALL, STATUS_UNVERIFIED,
     Library,
@@ -112,20 +119,11 @@ def apply_fallback(cfg: dict):
 # Main fetch
 # ---------------------------------------------------------------------------
 
-def fetch_artwork(cfg: dict = None, lib: Library = None) -> bool:
-    """Read the song file, resolve artwork through the lookup order, write output."""
-    if cfg is None:
-        cfg = config.load_config()
-    if lib is None:
-        lib = Library()
-
-    result = read_song_file(cfg.get("song_file"))
-    if result is None:
-        log.info("No song data — applying fallback")
-        apply_fallback(cfg)
-        return False
-
-    song, artist = result
+def resolve_artwork_for_song(cfg: dict, lib: Library, song: str, artist: str) -> bool:
+    """
+    Given a resolved (song, artist) — from whatever source — run the lookup
+    order and write the output image. Returns True if artwork was displayed.
+    """
     log.info("Current song: '%s' by '%s'", song, artist)
 
     # 2. Own songs → fallback, no search.
@@ -171,7 +169,98 @@ def fetch_artwork(cfg: dict = None, lib: Library = None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Watch mode (ported skeleton from v2)
+# Source drivers: read one "current song" and hand it to the resolver
+# ---------------------------------------------------------------------------
+
+def fetch_from_file(cfg: dict, lib: Library) -> bool:
+    """Read the song file once and resolve artwork. Empty/missing -> fallback."""
+    result = read_song_file(cfg.get("song_file"))
+    if result is None:
+        log.info("No song data — applying fallback")
+        apply_fallback(cfg)
+        return False
+    return resolve_artwork_for_song(cfg, lib, *result)
+
+
+def fetch_from_ssl(cfg: dict, lib: Library, streamer_id) -> bool:
+    """
+    Read the top of the SSL queue once and resolve artwork. Empty queue ->
+    fallback. A network/HTTP error leaves the output image untouched (better to
+    hold the last frame than flap the overlay on one failed poll) and returns
+    False.
+    """
+    try:
+        result = songlist.fetch_current_song(streamer_id)
+    except requests.RequestException as e:
+        log.warning("SSL queue fetch failed (%s) — leaving output unchanged", e)
+        return False
+    if result is None:
+        log.info("Queue empty — applying fallback")
+        apply_fallback(cfg)
+        return False
+    return resolve_artwork_for_song(cfg, lib, *result)
+
+
+def _resolve_streamer_id(cfg: dict):
+    """Resolve the configured username to a streamer id, or exit with a message."""
+    username = cfg.get("streamersonglist_username")
+    if not username:
+        log.error("No StreamerSonglist username configured — set it in the "
+                  "dashboard settings")
+        sys.exit(1)
+    try:
+        streamer = songlist.resolve_streamer(username)
+    except requests.RequestException as e:
+        log.error("Could not resolve StreamerSonglist username '%s': %s",
+                  username, e)
+        sys.exit(1)
+    return streamer.get("id"), streamer.get("name")
+
+
+# ---------------------------------------------------------------------------
+# Poll mode (SSL queue — the default runtime source)
+# ---------------------------------------------------------------------------
+
+def poll_mode(cfg: dict):
+    streamer_id, name = _resolve_streamer_id(cfg)
+    try:
+        interval = max(2, int(cfg.get("poll_interval", 10)))
+    except (TypeError, ValueError):
+        interval = 10
+
+    lib = Library()
+    log.info("Polling StreamerSonglist queue for %s (id=%s) every %ss",
+             name, streamer_id, interval)
+    log.info("Press Ctrl+C to stop")
+
+    last = None  # last resolved (song, artist) tuple, or None for empty queue
+    try:
+        while True:
+            try:
+                result = songlist.fetch_current_song(streamer_id)
+            except requests.RequestException as e:
+                # Transient — keep the current frame up and try again next tick.
+                log.warning("SSL queue fetch failed (%s) — retrying in %ss",
+                            e, interval)
+                time.sleep(interval)
+                continue
+
+            if result != last:
+                last = result
+                if result is None:
+                    log.info("Queue empty — applying fallback")
+                    apply_fallback(cfg)
+                else:
+                    log.info("Queue top changed — fetching artwork...")
+                    resolve_artwork_for_song(cfg, lib, *result)
+
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        log.info("Stopped polling")
+
+
+# ---------------------------------------------------------------------------
+# Watch mode (file source — ported skeleton from v2)
 # ---------------------------------------------------------------------------
 
 def watch_mode(cfg: dict):
@@ -217,7 +306,7 @@ def watch_mode(cfg: dict):
             self.last_content = content
 
             log.info("Song file changed — fetching artwork...")
-            fetch_artwork(cfg, lib)
+            fetch_from_file(cfg, lib)
 
     handler = SongFileHandler()
     observer = Observer()
@@ -234,7 +323,7 @@ def watch_mode(cfg: dict):
     except Exception:
         pass
 
-    fetch_artwork(cfg, lib)
+    fetch_from_file(cfg, lib)
 
     try:
         while True:
@@ -245,20 +334,35 @@ def watch_mode(cfg: dict):
     observer.join()
 
 
+def run_once(cfg: dict):
+    """Single fetch for the configured source, then exit."""
+    lib = Library()
+    if cfg.get("song_source", "streamersonglist") == "file":
+        return fetch_from_file(cfg, lib)
+    streamer_id, _ = _resolve_streamer_id(cfg)
+    return fetch_from_ssl(cfg, lib, streamer_id)
+
+
 def main():
     setup_logging()
     parser = argparse.ArgumentParser(
         description="Fetch album artwork for the current song"
     )
     parser.add_argument("--watch", "-w", action="store_true",
-                        help="Watch the song file for changes (continuous mode)")
+                        help="Run continuously (poll the SSL queue, or watch the "
+                             "song file if song_source is 'file')")
     args = parser.parse_args()
 
     cfg = config.load_config()
+    source = cfg.get("song_source", "streamersonglist")
+
     if args.watch:
-        watch_mode(cfg)
+        if source == "file":
+            watch_mode(cfg)
+        else:
+            poll_mode(cfg)
     else:
-        fetch_artwork(cfg)
+        run_once(cfg)
 
 
 if __name__ == "__main__":

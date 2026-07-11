@@ -9,8 +9,10 @@ It has two halves:
   stream). It pulls your songlist from StreamerSonglist, finds album artwork for
   every song, and lets you confirm, reject, or upload your own image for each one.
   The images you approve become your **artwork library**.
-- **Watcher** — runs during your stream. It watches a text file containing the
-  current song and writes an image file that OBS displays. It uses your approved
+- **Watcher** — runs during your stream. By default it polls your
+  StreamerSonglist queue and treats the song at the top as the current one,
+  writing an image file that OBS displays. (It can also watch a text file
+  instead, if you drive your current song some other way.) It uses your approved
   library first; if a song isn't in the library yet, it grabs a best guess live
   and flags it so you can review it after the stream.
 
@@ -24,10 +26,9 @@ Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
 - **Windows** (the file-saving is tuned for OBS on Windows).
 - **Python 3.10 or newer**. Get it from [python.org](https://www.python.org/downloads/).
   During install, tick **"Add Python to PATH"**.
-- A **StreamerSonglist** account with some songs in your list.
-- Something that writes your current song to a text file as `Song Title - Artist`
-  (many streamers already do this from OBS or a bot). You'll point the tool at
-  that file.
+- A **StreamerSonglist** account with some songs in your list. During a stream,
+  keep the song you're playing at the **top of your SSL queue** — that's all the
+  watcher needs. (Alternatively, point it at a text file your own setup writes.)
 
 ## 2. Install
 
@@ -47,7 +48,9 @@ Double-click **`run_dashboard.bat`** (or run `python -m app.dashboard`).
   - **Username or songlist URL** — e.g. `yourname` or
     `https://www.streamersonglist.com/t/yourname/songs`. Click **Test connection**
     to check it works and see your song count.
-  - **Song file** — the text file your setup writes the current song to.
+  - **Current song source** — leave on **StreamerSonglist queue** (recommended);
+    the watcher reads the top of your live queue. Only switch to **Text file** if
+    another tool writes your current song to a file, and set its path below.
   - **Output image** — where the artwork PNG should be written (point OBS at this).
   - **Fallback image** — shown for your own originals and for songs with no art.
   - **Skip artists** — your own artist name(s), comma separated. Songs by these
@@ -75,9 +78,12 @@ The keyboard shortcuts make reviewing a long list fast.
 
 ## 5. During your stream — the watcher
 
-Launch **`run_watcher.bat`** when your stream starts (TouchPortal can do this for
-you). It watches your song file and, whenever the song changes, writes the artwork
-image for OBS.
+Launch **`run_watcher.bat`** when your stream starts. By default it polls your
+StreamerSonglist queue every few seconds and, whenever the song at the top
+changes, writes the artwork image for OBS. Keep the song you're playing at the
+top of your queue and the artwork follows automatically. (With the **Text file**
+source it watches your file instead.) When your queue is empty, the fallback
+image is shown.
 
 Lookup order for each song:
 
