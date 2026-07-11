@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% set active = 'review' if mode == 'review' else 'queue' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="panel review" data-mode="{{ mode }}">
+  <div class="row spread">
+    <h1>{{ title }}</h1>
+    <span id="progress-count" class="muted"></span>
+  </div>
+
+  <div id="empty" class="empty-state" hidden>
+    <p>Nothing to review here. 🎉</p>
+    <p class="muted">Sync your songlist and run <strong>Bulk propose</strong> on the Songs page.</p>
+  </div>
+
+  <div id="card" class="card" hidden>
+    <div class="art-wrap" id="art-wrap">
+      <img id="art" alt="artwork">
+      <div id="no-art" class="no-art" hidden>No image — try another source or upload one.</div>
+    </div>
+    <div class="meta">
+      <h2 id="song-title"></h2>
+      <div id="song-artist" class="muted big"></div>
+      <div class="badges">
+        <span id="badge-source" class="badge"></span>
+        <span id="badge-album" class="badge subtle"></span>
+        <span id="badge-cand" class="badge subtle"></span>
+        <span id="badge-sim" class="badge subtle"></span>
+      </div>
+
+      <div class="actions">
+        <button id="btn-confirm" class="primary">Confirm <kbd>Y</kbd></button>
+        <button id="btn-reject" class="secondary">Reject → next <kbd>N</kbd></button>
+        <button id="btn-skip" class="secondary">Skip <kbd>→</kbd></button>
+        <label class="upload secondary">Upload <kbd>U</kbd>
+          <input type="file" id="file" accept="image/png,image/jpeg,image/webp" hidden>
+        </label>
+      </div>
+      <div id="dropzone" class="dropzone">Drag &amp; drop an image here to replace</div>
+      <div id="msg" class="muted"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const MODE = document.querySelector('.review').dataset.mode;
+const FILTER = MODE === 'queue' ? 'queue' : 'review';
+let queue = [];       // list of keys to review
+let pos = 0;
+let current = null;   // current entry view
+
+const $ = id => document.getElementById(id);
+
+async function load() {
+  const r = await fetch(`{{ url_for("api_entries") }}?filter=${FILTER}`);
+  queue = (await r.json()).entries.map(e => e.key);
+  pos = 0;
+  if (queue.length === 0) { $('card').hidden = true; $('empty').hidden = false; }
+  else { $('empty').hidden = true; showCurrent(); }
+}
+
+async function showCurrent() {
+  if (pos >= queue.length) { $('card').hidden = true; $('empty').hidden = false;
+    $('progress-count').textContent = ''; return; }
+  const r = await fetch(`{{ url_for("api_entry") }}?key=${encodeURIComponent(queue[pos])}`);
+  current = await r.json();
+  paint();
+}
+
+function paint() {
+  $('card').hidden = false;
+  $('progress-count').textContent = `${pos + 1} / ${queue.length}`;
+  $('song-title').textContent = current.title || '';
+  $('song-artist').textContent = current.artist || '';
+  const art = $('art'), noArt = $('no-art');
+  if (current.has_image) {
+    art.src = current.image_url; art.hidden = false; noArt.hidden = true;
+  } else { art.hidden = true; noArt.hidden = false; }
+  $('badge-source').textContent = current.candidate_source || current.source || 'no source';
+  $('badge-album').textContent = current.candidate_album ? `album: ${current.candidate_album}` : '';
+  $('badge-album').hidden = !current.candidate_album;
+  const cc = current.candidate_count;
+  $('badge-cand').textContent = cc ? `candidate ${current.candidate_index + 1}/${cc}` : '';
+  $('badge-cand').hidden = !cc;
+  $('badge-sim').textContent = current.similarity != null
+    ? `artist match ${Math.round(current.similarity * 100)}%` : '';
+  $('badge-sim').hidden = current.similarity == null;
+  $('btn-confirm').disabled = !current.has_image;
+  $('msg').textContent = '';
+}
+
+async function post(url, body) {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)});
+  return r.json();
+}
+
+async function confirm() {
+  if (!current || !current.has_image) return;
+  await post('{{ url_for("api_confirm") }}', {key: current.key});
+  next();
+}
+async function reject() {
+  if (!current) return;
+  $('msg').textContent = 'Searching next candidate…';
+  const d = await post('{{ url_for("api_reject") }}', {key: current.key});
+  current = d;
+  if (current.status === 'rejected_all') {
+    $('msg').textContent = 'No more candidates — upload one or skip.';
+  }
+  paint();
+}
+function skip() { pos++; showCurrent(); }
+function next() { pos++; showCurrent(); }
+
+$('btn-confirm').addEventListener('click', confirm);
+$('btn-reject').addEventListener('click', reject);
+$('btn-skip').addEventListener('click', skip);
+$('file').addEventListener('change', e => { if (e.target.files[0]) upload(e.target.files[0]); });
+
+async function upload(file) {
+  const fd = new FormData();
+  fd.append('key', current.key);
+  fd.append('file', file);
+  $('msg').textContent = 'Uploading…';
+  const r = await fetch('{{ url_for("api_upload") }}', {method: 'POST', body: fd});
+  const d = await r.json();
+  if (d.ok) next(); else $('msg').textContent = 'Upload failed: ' + d.error;
+}
+
+const dz = $('dropzone');
+['dragover', 'dragenter'].forEach(ev => dz.addEventListener(ev, e => {
+  e.preventDefault(); dz.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => {
+  e.preventDefault(); dz.classList.remove('over'); }));
+dz.addEventListener('drop', e => { if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); });
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'y' || e.key === 'Y') confirm();
+  else if (e.key === 'n' || e.key === 'N') reject();
+  else if (e.key === 'ArrowRight') skip();
+  else if (e.key === 'u' || e.key === 'U') $('file').click();
+});
+
+load();
+</script>
+{% endblock %}

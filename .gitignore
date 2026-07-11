@@ -1,0 +1,18 @@
+# User config (may contain a personal Last.fm API key) — never commit
+config.json
+
+# Local artwork library + its manifest + songlist snapshot
+library/
+cache/
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.idea/
+.vscode/

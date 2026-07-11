@@ -1,0 +1,4 @@
+Flask>=3.0
+requests>=2.31
+Pillow>=10.0
+watchdog>=3.0

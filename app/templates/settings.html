@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% set active = 'settings' %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="panel">
+  <h1>Settings</h1>
+  {% if request.args.get('saved') %}<div class="flash ok">Settings saved.</div>{% endif %}
+
+  <form method="post" action="{{ url_for('save_settings') }}" class="form">
+    <fieldset>
+      <legend>StreamerSonglist</legend>
+      <label>Username or songlist URL
+        <input type="text" name="streamersonglist_username"
+               value="{{ cfg.streamersonglist_username }}"
+               placeholder="alanthompson_music or https://www.streamersonglist.com/t/…/songs">
+      </label>
+      <div class="row">
+        <button type="button" id="test-btn" class="secondary">Test connection</button>
+        <span id="test-result" class="muted"></span>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Files (used by the watcher during streams)</legend>
+      <label>Song file (what OBS/your bot writes the current song to)
+        <input type="text" name="song_file" value="{{ cfg.song_file }}"
+               placeholder="D:\Twitch Streaming\current song.txt"></label>
+      <label>Output image (what OBS displays)
+        <input type="text" name="output_image" value="{{ cfg.output_image }}"
+               placeholder="D:\Twitch Streaming\current_artwork.png"></label>
+      <label>Fallback image (shown for your own songs / misses)
+        <input type="text" name="fallback_image" value="{{ cfg.fallback_image }}"
+               placeholder="D:\Twitch Streaming\default_artwork.png"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Search</legend>
+      <label>iTunes country code
+        <input type="text" name="itunes_country" value="{{ cfg.itunes_country }}" size="4"></label>
+      <label>Last.fm API key (optional — leave blank to skip Last.fm)
+        <input type="text" name="lastfm_api_key" value="{{ cfg.lastfm_api_key }}"></label>
+      <label>Skip artists (your own originals, comma separated → fallback image, no search)
+        <input type="text" name="skip_artists"
+               value="{{ cfg.skip_artists | join(', ') }}"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Output image</legend>
+      <label>Image size (px)
+        <input type="number" name="image_size" value="{{ cfg.image_size }}" min="64" max="2048"></label>
+      <label class="checkbox"><input type="checkbox" name="reflection_enabled"
+             {{ 'checked' if cfg.reflection.enabled }}> Reflection effect</label>
+      <div class="grid">
+        <label>Height <input type="number" step="0.05" name="reflection_height" value="{{ cfg.reflection.height }}"></label>
+        <label>Opacity <input type="number" step="0.05" name="reflection_opacity" value="{{ cfg.reflection.opacity }}"></label>
+        <label>Gap <input type="number" name="reflection_gap" value="{{ cfg.reflection.gap }}"></label>
+        <label>Perspective <input type="number" step="0.05" name="reflection_perspective" value="{{ cfg.reflection.perspective }}"></label>
+        <label>Fade power <input type="number" step="0.05" name="reflection_fade_power" value="{{ cfg.reflection.fade_power }}"></label>
+      </div>
+    </fieldset>
+
+    <button type="submit" class="primary">Save settings</button>
+  </form>
+</div>
+
+<script>
+document.getElementById('test-btn').addEventListener('click', async () => {
+  const el = document.getElementById('test-result');
+  const username = document.querySelector('[name=streamersonglist_username]').value;
+  el.textContent = 'Testing…';
+  try {
+    const r = await fetch('{{ url_for("api_test_connection") }}', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username})
+    });
+    const d = await r.json();
+    if (d.ok) { el.textContent = `✅ ${d.name} (id ${d.id}) — ${d.song_count} songs`; el.className = 'ok'; }
+    else { el.textContent = `❌ ${d.error}`; el.className = 'err'; }
+  } catch (e) { el.textContent = '❌ ' + e; el.className = 'err'; }
+});
+</script>
+{% endblock %}

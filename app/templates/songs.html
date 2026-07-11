@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% set active = 'songs' %}
+{% block title %}Songs{% endblock %}
+{% block content %}
+<div class="panel">
+  <div class="row spread">
+    <h1>Songlist</h1>
+    <div class="row">
+      <button id="sync-btn" class="secondary">Sync songlist</button>
+      <button id="propose-btn" class="primary">Bulk propose artwork</button>
+      <button id="stop-btn" class="secondary" hidden>Stop</button>
+    </div>
+  </div>
+  <div id="status" class="muted"></div>
+  <div id="progress" class="progress" hidden><div id="bar"></div></div>
+
+  <div class="row filters">
+    <input type="search" id="search" placeholder="Filter…">
+    <label class="checkbox"><input type="checkbox" id="only-missing"> Only songs needing art</label>
+    <span id="counts" class="muted"></span>
+  </div>
+
+  <table class="songs">
+    <thead><tr><th>Art</th><th>Title</th><th>Artist</th><th>Status</th><th>Source</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<script>
+const statusEl = document.getElementById('status');
+const rowsEl = document.getElementById('rows');
+let allRows = [];
+
+const STATUS_LABEL = {
+  confirmed: '✅ confirmed', proposed: '🟡 proposed',
+  unverified: '🔵 unverified', rejected_all: '⛔ no art', null: '— none'
+};
+
+function needsArt(r) {
+  return !(r.status === 'confirmed');
+}
+
+function render() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const onlyMissing = document.getElementById('only-missing').checked;
+  const filtered = allRows.filter(r => {
+    if (onlyMissing && !needsArt(r)) return false;
+    if (q && !(`${r.title} ${r.artist}`.toLowerCase().includes(q))) return false;
+    return true;
+  });
+  rowsEl.innerHTML = '';
+  for (const r of filtered) {
+    const tr = document.createElement('tr');
+    const thumb = r.image_url
+      ? `<img class="thumb" src="${r.image_url}" alt="">`
+      : `<div class="thumb empty"></div>`;
+    tr.innerHTML = `<td>${thumb}</td><td>${esc(r.title)}</td><td>${esc(r.artist)}</td>
+      <td>${STATUS_LABEL[r.status] || STATUS_LABEL.null}</td><td>${esc(r.source||'')}</td>`;
+    rowsEl.appendChild(tr);
+  }
+  document.getElementById('counts').textContent =
+    `${filtered.length} shown · ${allRows.length} in list · ` +
+    `${allRows.filter(needsArt).length} need art`;
+}
+
+function esc(s){ return (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+async function loadRows() {
+  const r = await fetch('{{ url_for("api_entries") }}?filter=songlist');
+  allRows = (await r.json()).entries;
+  render();
+}
+
+document.getElementById('search').addEventListener('input', render);
+document.getElementById('only-missing').addEventListener('change', render);
+
+document.getElementById('sync-btn').addEventListener('click', async () => {
+  statusEl.textContent = 'Syncing songlist…';
+  const r = await fetch('{{ url_for("api_sync") }}', {method: 'POST'});
+  const d = await r.json();
+  statusEl.textContent = d.ok
+    ? `Synced ${d.total} songs (${d.added} new).`
+    : `Sync failed: ${d.error}`;
+  if (d.ok) loadRows();
+});
+
+let pollTimer = null;
+document.getElementById('propose-btn').addEventListener('click', async () => {
+  await fetch('{{ url_for("api_propose_start") }}', {method: 'POST'});
+  document.getElementById('stop-btn').hidden = false;
+  document.getElementById('progress').hidden = false;
+  pollProgress();
+});
+document.getElementById('stop-btn').addEventListener('click', async () => {
+  await fetch('{{ url_for("api_propose_stop") }}', {method: 'POST'});
+  statusEl.textContent = 'Stopping after current song…';
+});
+
+async function pollProgress() {
+  const r = await fetch('{{ url_for("api_propose_status") }}');
+  const s = await r.json();
+  const pct = s.total ? Math.round(100 * s.done / s.total) : 0;
+  document.getElementById('bar').style.width = pct + '%';
+  statusEl.textContent = s.running
+    ? `Proposing ${s.done}/${s.total} (${s.found} found) — ${s.current}`
+    : (s.total ? `Done: ${s.done}/${s.total} proposed, ${s.found} with art.` : 'Idle.');
+  if (s.running) { pollTimer = setTimeout(pollProgress, 1000); }
+  else {
+    document.getElementById('stop-btn').hidden = true;
+    loadRows();
+  }
+}
+
+loadRows();
+</script>
+{% endblock %}

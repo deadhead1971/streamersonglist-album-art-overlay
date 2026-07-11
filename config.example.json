@@ -1,0 +1,18 @@
+{
+  "streamersonglist_username": "",
+  "song_file": "D:\\Twitch Streaming\\current song.txt",
+  "output_image": "D:\\Twitch Streaming\\current_artwork.png",
+  "fallback_image": "D:\\Twitch Streaming\\default_artwork.png",
+  "skip_artists": [],
+  "itunes_country": "GB",
+  "lastfm_api_key": "",
+  "image_size": 640,
+  "reflection": {
+    "enabled": true,
+    "height": 0.6,
+    "opacity": 1.0,
+    "gap": 5,
+    "perspective": 0.55,
+    "fade_power": 0.5
+  }
+}
