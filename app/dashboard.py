@@ -77,8 +77,22 @@ def merge_songlist(lib: Library, songs: list) -> int:
                 entry["candidates"] = []
                 entry["candidate_index"] = -1
                 entry["candidates_tried"] = []
-                if entry.get("status") == "rejected_all":
+                entry["searched_sources"] = []
+                if entry.get("status") in ("proposed", "rejected_all"):
                     entry["status"] = None
+            lib.touch(entry)
+        elif (
+            entry.get("status") == "proposed"
+            and not entry.get("candidates")
+            and not lib.has_image(entry)
+        ):
+            # Stuck entry from an earlier sync that reset the candidate pool
+            # without resetting the status: nothing to review, and bulk propose
+            # skips non-empty statuses. Hand it back to the propose flow.
+            entry["candidate_index"] = -1
+            entry["candidates_tried"] = []
+            entry["searched_sources"] = []
+            entry["status"] = None
             lib.touch(entry)
 
     lib.save()
