@@ -65,6 +65,23 @@ DEFAULT_CONFIG = {
         "animation": "slide",    # slide | fade | none
         "anim_speed": "normal",  # normal | fast
     },
+    # Now-playing card (OBS browser source at /overlay/current).
+    "overlay_current": {
+        "layout": "horizontal",  # horizontal (art left) | vertical (art top)
+        "show_artwork": True,
+        "show_title": True,
+        "show_artist": True,
+        "show_requester": True,
+        "show_label": True,      # the small caption above the title
+        "label_text": "Now playing",
+        "preset": "dark",        # dark | light | minimal | glass
+        "font_size": 26,         # px, title base size
+        "art_size": 160,         # px, artwork square
+        "accent": "#4da3ff",     # label / highlight colour
+        "animation": "fade",     # slide | fade | none — on song change
+        "anim_speed": "normal",  # normal | fast
+        "hide_when_empty": True, # hide the card when the queue is empty
+    },
     "reflection": {
         "enabled": True,
         "height": 0.6,

@@ -556,18 +556,28 @@ _OVERLAY_BOOL_KEYS = {
 }
 
 
-def overlay_options(cfg: dict, args) -> dict:
-    """Effective overlay options: config defaults + query-string overrides."""
-    opts = dict(config.DEFAULT_CONFIG["overlay"])
-    opts.update(cfg.get("overlay", {}))
+_CURRENT_LAYOUTS = ("horizontal", "vertical")
 
-    for param, key in _OVERLAY_BOOL_KEYS.items():
+_CURRENT_BOOL_KEYS = {
+    "art": "show_artwork",
+    "title": "show_title",
+    "artist": "show_artist",
+    "requester": "show_requester",
+    "label": "show_label",
+    "hide_empty": "hide_when_empty",
+}
+
+
+def _merge_overlay_options(cfg: dict, args, section: str,
+                           bool_keys: dict, int_specs) -> dict:
+    """Effective options for one overlay: defaults + config + query overrides."""
+    opts = dict(config.DEFAULT_CONFIG[section])
+    opts.update(cfg.get(section, {}))
+
+    for param, key in bool_keys.items():
         if param in args:
             opts[key] = args.get(param) not in ("0", "false", "no", "")
-    for param, key, lo, hi in (("max", "max_songs", 1, 20),
-                               ("font_size", "font_size", 8, 72),
-                               ("art_size", "art_size", 16, 300),
-                               ("row_gap", "row_gap", 0, 100)):
+    for param, key, lo, hi in int_specs:
         if param in args:
             try:
                 opts[key] = min(hi, max(lo, int(args.get(param))))
@@ -582,6 +592,39 @@ def overlay_options(cfg: dict, args) -> dict:
     if args.get("accent"):
         opts["accent"] = args.get("accent")
     return opts
+
+
+def overlay_options(cfg: dict, args) -> dict:
+    """Effective queue overlay options: config defaults + query overrides."""
+    return _merge_overlay_options(
+        cfg, args, "overlay", _OVERLAY_BOOL_KEYS,
+        (("max", "max_songs", 1, 20),
+         ("font_size", "font_size", 8, 72),
+         ("art_size", "art_size", 16, 300),
+         ("row_gap", "row_gap", 0, 100)))
+
+
+def overlay_current_options(cfg: dict, args) -> dict:
+    """Effective now-playing card options: config defaults + query overrides."""
+    opts = _merge_overlay_options(
+        cfg, args, "overlay_current", _CURRENT_BOOL_KEYS,
+        (("font_size", "font_size", 8, 96),
+         ("art_size", "art_size", 32, 600)))
+    if args.get("layout") in _CURRENT_LAYOUTS:
+        opts["layout"] = args.get("layout")
+    if args.get("label_text"):
+        opts["label_text"] = args.get("label_text")
+    return opts
+
+
+def _resolve_art(lib: Library, title: str, artist: str) -> str:
+    """URL of the stored artwork for a song, or the overlay fallback image."""
+    entry = lib.get(title, artist)
+    if (entry and entry.get("status") in _OVERLAY_STATUSES
+            and lib.has_image(entry)):
+        return url_for("serve_image", key=normalize_key(title, artist),
+                       v=entry.get("updated_at", ""))
+    return url_for("overlay_fallback_image")
 
 
 @app.route("/overlay/queue.json")
@@ -600,14 +643,7 @@ def overlay_queue_json():
         view = songlist.queue_item_view(item, pos)
         if view is None:
             continue
-        entry = lib.get(view["title"], view["artist"])
-        if (entry and entry.get("status") in _OVERLAY_STATUSES
-                and lib.has_image(entry)):
-            view["art"] = url_for("serve_image",
-                                  key=normalize_key(view["title"], view["artist"]),
-                                  v=entry.get("updated_at", ""))
-        else:
-            view["art"] = url_for("overlay_fallback_image")
+        view["art"] = _resolve_art(lib, view["title"], view["artist"])
         rows.append(view)
 
     return jsonify({"items": rows, "options": opts})
@@ -634,14 +670,37 @@ def overlay_queue_page():
                            qs=request.query_string.decode("utf-8"))
 
 
+@app.route("/overlay/current.json")
+def overlay_current_json():
+    cfg = config.load_config()
+    opts = overlay_current_options(cfg, request.args)
+    items = runtime.service.get_queue(cfg)
+    view = songlist.queue_item_view(items[0], 1) if items else None
+    if view is not None:
+        view["art"] = _resolve_art(Library(), view["title"], view["artist"])
+    return jsonify({"item": view, "options": opts})
+
+
+@app.route("/overlay/current")
+def overlay_current_page():
+    cfg = config.load_config()
+    opts = overlay_current_options(cfg, request.args)
+    return render_template("overlay_current.html", opts=opts,
+                           qs=request.query_string.decode("utf-8"))
+
+
 @app.route("/overlay")
 def overlay_settings_page():
     cfg = config.load_config()
     if not cfg.get("streamersonglist_username"):
         return redirect(url_for("settings_page"))
     opts = overlay_options(cfg, {})
+    cur_opts = overlay_current_options(cfg, {})
     overlay_url = url_for("overlay_queue_page", _external=True)
+    current_url = url_for("overlay_current_page", _external=True)
     return render_template("overlay_settings.html", opts=opts, cfg=cfg,
+                           cur_opts=cur_opts, current_url=current_url,
+                           layouts=_CURRENT_LAYOUTS,
                            overlay_url=overlay_url, presets=_OVERLAY_PRESETS,
                            animations=_OVERLAY_ANIMATIONS, speeds=_OVERLAY_SPEEDS)
 
@@ -675,6 +734,35 @@ def save_overlay_settings():
 
     config.save_config(cfg)
     return redirect(url_for("overlay_settings_page", saved=1))
+
+
+@app.route("/overlay/current", methods=["POST"])
+def save_overlay_current_settings():
+    cfg = config.load_config()
+    form = request.form
+    opts = cfg.setdefault("overlay_current", {})
+
+    for key in _CURRENT_BOOL_KEYS.values():
+        opts[key] = form.get(key) == "on"
+    for key, default, lo, hi in (("font_size", 26, 8, 96),
+                                 ("art_size", 160, 32, 600)):
+        try:
+            opts[key] = min(hi, max(lo, int(form.get(key, default))))
+        except (TypeError, ValueError):
+            opts[key] = default
+    layout = form.get("layout", "horizontal")
+    opts["layout"] = layout if layout in _CURRENT_LAYOUTS else "horizontal"
+    preset = form.get("preset", "dark")
+    opts["preset"] = preset if preset in _OVERLAY_PRESETS else "dark"
+    animation = form.get("animation", "fade")
+    opts["animation"] = animation if animation in _OVERLAY_ANIMATIONS else "fade"
+    speed = form.get("anim_speed", "normal")
+    opts["anim_speed"] = speed if speed in _OVERLAY_SPEEDS else "normal"
+    opts["accent"] = form.get("accent", "#4da3ff").strip() or "#4da3ff"
+    opts["label_text"] = form.get("label_text", "").strip() or "Now playing"
+
+    config.save_config(cfg)
+    return redirect(url_for("overlay_settings_page", saved="current"))
 
 
 # ---------------------------------------------------------------------------

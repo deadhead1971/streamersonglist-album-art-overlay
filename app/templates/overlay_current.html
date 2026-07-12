@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Now playing overlay</title>
+<style>
+  /* Transparent page for OBS browser source. Styling is applied per-render
+     from the options in current.json, so dashboard changes go live without
+     touching OBS. */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: transparent; overflow: hidden; }
+  body {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    padding: 8px;
+  }
+  #stage { display: inline-block; }
+  .card {
+    display: flex;
+    align-items: center;
+    gap: 0.7em;
+    border-radius: 12px;
+    padding: 0.5em 0.7em;
+    transition: opacity var(--dur, .4s) ease, transform var(--dur, .4s) ease;
+  }
+  body.l-vertical .card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  /* Enter/exit states, driven by the animation mode class on <body>. */
+  body.a-none .card { transition: none; }
+  .card.pre-enter { opacity: 0; }
+  body.a-slide .card.pre-enter { transform: translateY(1.2em); }
+  .card.exiting { opacity: 0; }
+  body.a-slide .card.exiting { transform: translateX(-2.5em); }
+
+  .art {
+    object-fit: cover;
+    border-radius: 8px;
+    flex: none;
+    background: rgba(0,0,0,.4);
+  }
+  .meta { min-width: 0; }
+  .label {
+    font-size: .55em;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    margin-bottom: .25em;
+  }
+  .title, .artist, .requester {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .title { font-weight: 600; }
+  .artist { opacity: .85; font-size: .8em; }
+  .requester { opacity: .7; font-size: .65em; font-style: italic; }
+  .title.placeholder { opacity: .6; font-style: italic; }
+
+  /* Presets */
+  body.p-dark .card { background: rgba(12,12,16,.82); color: #f2f2f2;
+                      box-shadow: 0 2px 8px rgba(0,0,0,.35); }
+  body.p-light .card { background: rgba(250,250,252,.88); color: #16161a;
+                       box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+  body.p-minimal .card { background: none; color: #fff; padding: 0.2em 0;
+                         text-shadow: 0 1px 4px rgba(0,0,0,.9),
+                                      0 0 12px rgba(0,0,0,.6); }
+  body.p-glass .card { background: rgba(255,255,255,.10); color: #fff;
+                       backdrop-filter: blur(10px);
+                       -webkit-backdrop-filter: blur(10px);
+                       border: 1px solid rgba(255,255,255,.18);
+                       text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+</style>
+</head>
+<body class="p-{{ opts.preset }} a-{{ opts.animation }} l-{{ opts.layout }}">
+<div id="stage"></div>
+<script>
+  const QS = {{ qs | tojson }};
+  const POLL_MS = 5000;
+  const stage = document.getElementById("stage");
+
+  let cardEl = null;      // the current .card element, if shown
+  let lastKey = null;     // identity of the song the card shows
+  let lastItem = "";
+  let lastOpts = "";
+  let animating = false;
+  let pendingData = null;
+
+  const esc = s => (s || "").replace(/[&<>"]/g,
+    c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+  const keyOf = it => it == null ? null
+    : (it.id != null ? "id:" + it.id : `${it.title}|${it.artist}`);
+
+  function durations(o) {
+    if (o.animation === "none") return { exit: 0, enter: 0 };
+    const f = o.anim_speed === "fast" ? 0.5 : 1;
+    return { exit: 400 * f, enter: 400 * f };
+  }
+
+  function cardHtml(item, o) {
+    let h = "";
+    if (o.show_artwork) {
+      const src = item ? item.art : "/overlay/fallback.png";
+      h += `<img class="art" src="${esc(src)}" width="${o.art_size}" height="${o.art_size}" alt="">`;
+    }
+    let meta = "";
+    if (o.show_label)
+      meta += `<div class="label" style="color:${esc(o.accent)}">${esc(o.label_text)}</div>`;
+    if (item) {
+      if (o.show_title) meta += `<div class="title">${esc(item.title)}</div>`;
+      if (o.show_artist && item.artist) meta += `<div class="artist">${esc(item.artist)}</div>`;
+      if (o.show_requester && item.requester)
+        meta += `<div class="requester">requested by ${esc(item.requester)}</div>`;
+    } else {
+      meta += `<div class="title placeholder">Nothing playing</div>`;
+    }
+    if (meta) h += `<div class="meta">${meta}</div>`;
+    return h;
+  }
+
+  function applyPageStyle(o, d) {
+    document.body.className = `p-${o.preset} a-${o.animation} l-${o.layout}`;
+    document.body.style.fontSize = o.font_size + "px";
+    document.body.style.setProperty("--dur", (Math.max(d.exit, d.enter) / 1000) + "s");
+  }
+
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const reflow = el => void el.offsetHeight;
+
+  async function removeCard(d) {
+    if (!cardEl) return;
+    if (d.exit) {
+      cardEl.classList.add("exiting");
+      await wait(d.exit);
+    }
+    cardEl.remove();
+    cardEl = null;
+  }
+
+  async function showCard(item, o, d) {
+    const el = document.createElement("div");
+    el.className = "card pre-enter";
+    el.innerHTML = cardHtml(item, o);
+    stage.appendChild(el);
+    cardEl = el;
+    reflow(el);
+    el.classList.remove("pre-enter");
+    if (d.enter) await wait(d.enter);
+  }
+
+  async function transition(item, o) {
+    const d = durations(o);
+    applyPageStyle(o, d);
+    const showPlaceholder = item == null && !o.hide_when_empty;
+    await removeCard(d);
+    if (item != null || showPlaceholder) await showCard(item, o, d);
+  }
+
+  async function render(data) {
+    const itemJson = JSON.stringify(data.item);
+    const optsJson = JSON.stringify(data.options);
+    if (itemJson === lastItem && optsJson === lastOpts) return;
+    const key = keyOf(data.item);
+    const songChanged = key !== lastKey;
+    lastItem = itemJson;
+    lastOpts = optsJson;
+    lastKey = key;
+
+    animating = true;
+    try {
+      const o = data.options;
+      if (songChanged || (data.item == null && !!cardEl === o.hide_when_empty)) {
+        await transition(data.item, o);
+      } else {
+        // Style-only change (or artwork URL refresh): restyle in place.
+        applyPageStyle(o, durations(o));
+        if (cardEl) cardEl.innerHTML = cardHtml(data.item, o);
+      }
+    } finally {
+      animating = false;
+    }
+    if (pendingData) {
+      const next = pendingData;
+      pendingData = null;
+      render(next);
+    }
+  }
+
+  async function poll() {
+    try {
+      const resp = await fetch("/overlay/current.json" + (QS ? "?" + QS : ""));
+      if (resp.ok) {
+        const data = await resp.json();
+        if (animating) pendingData = data;   // finish the current sequence first
+        else render(data);
+      }
+    } catch (e) { /* dashboard briefly down — keep last render */ }
+    setTimeout(poll, POLL_MS);
+  }
+  poll();
+</script>
+</body>
+</html>
