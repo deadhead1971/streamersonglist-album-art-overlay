@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Queue overlay loader</title>
+<style>html, body { margin: 0; background: transparent; }</style>
+</head>
+<body>
+<script>
+  // OBS local-file loader: waits for the dashboard to come up, then hands
+  // over to the live overlay page. Lets OBS start before the dashboard.
+  var BASE = "http://127.0.0.1:5050";
+  var TARGET = BASE + "/overlay/queue" + location.search;
+  function probe() {
+    // An <img> probe works from file:// regardless of CORS policy.
+    var img = new Image();
+    img.onload = function () { location.replace(TARGET); };
+    img.onerror = function () { setTimeout(probe, 2000); };
+    img.src = BASE + "/overlay/fallback.png?probe=" + Date.now();
+  }
+  probe();
+</script>
+</body>
+</html>

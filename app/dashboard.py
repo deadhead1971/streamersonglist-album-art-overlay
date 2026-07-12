@@ -698,7 +698,10 @@ def overlay_settings_page():
     cur_opts = overlay_current_options(cfg, {})
     overlay_url = url_for("overlay_queue_page", _external=True)
     current_url = url_for("overlay_current_page", _external=True)
+    loader_dir = Path(__file__).resolve().parent.parent / "obs"
     return render_template("overlay_settings.html", opts=opts, cfg=cfg,
+                           queue_loader=str(loader_dir / "overlay_queue.html"),
+                           current_loader=str(loader_dir / "overlay_current.html"),
                            cur_opts=cur_opts, current_url=current_url,
                            layouts=_CURRENT_LAYOUTS,
                            overlay_url=overlay_url, presets=_OVERLAY_PRESETS,
