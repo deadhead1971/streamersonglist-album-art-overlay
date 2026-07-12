@@ -414,6 +414,11 @@ def api_entries():
             continue
         if flt == "review" and status not in (STATUS_PROPOSED, STATUS_UNVERIFIED):
             continue
+        if (flt == "review" and status == STATUS_PROPOSED
+                and entry.get("in_songlist") is False):
+            # Proposed entries only exist via sync; in_songlist False means the
+            # song was renamed/removed in SSL — don't resurface it for review.
+            continue
         if flt == "queue" and status != STATUS_UNVERIFIED:
             continue
         rows.append(entry_view(lib, key, entry))
