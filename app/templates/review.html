@@ -149,7 +149,9 @@ async function post(url, body) {
 }
 
 async function select(index) {
-  if (busy || index === current.candidate_index) return;
+  // Re-selecting the "current" candidate is only a no-op if its image actually
+  // loaded — otherwise let the click through so a stuck selection can recover.
+  if (busy || (index === current.candidate_index && current.has_image)) return;
   busy = true;
   $('msg').textContent = 'Loading that option…';
   const d = await post('{{ url_for("api_select") }}', {key: current.key, index});

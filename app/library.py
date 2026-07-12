@@ -187,7 +187,7 @@ class Library:
                 "source": None,
                 "album": None,
                 "candidates": [],
-                "candidate_index": 0,
+                "candidate_index": -1,
                 "candidates_tried": [],
                 "updated_at": _utcnow(),
             }

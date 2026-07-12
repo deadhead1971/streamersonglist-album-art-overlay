@@ -75,7 +75,7 @@ def merge_songlist(lib: Library, songs: list) -> int:
             entry["artist"] = artist
             if entry.get("status") != "confirmed":
                 entry["candidates"] = []
-                entry["candidate_index"] = 0
+                entry["candidate_index"] = -1
                 entry["candidates_tried"] = []
                 if entry.get("status") == "rejected_all":
                     entry["status"] = None
