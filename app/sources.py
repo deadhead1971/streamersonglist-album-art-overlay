@@ -69,6 +69,10 @@ def artist_similarity(requested: str, found: str) -> float:
     b = normalize_text(found)
     if not a:
         return 1.0
+    # One name containing the other (as whole words) is a match: covers
+    # "Ryan Adams" vs "Ryan Adams & The Cardinals" style band credits.
+    if b and (f" {a} " in f" {b} " or f" {b} " in f" {a} "):
+        return 1.0
     return SequenceMatcher(None, a, b).ratio()
 
 
