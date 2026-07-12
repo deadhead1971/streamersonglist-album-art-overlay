@@ -20,11 +20,16 @@
     gap: 0.6em;
     border-radius: 10px;
     padding: 0.35em 0.6em;
-    opacity: 0;
-    transform: translateY(6px);
-    transition: opacity .5s ease, transform .5s ease;
+    transition: opacity var(--dur, .4s) ease, transform var(--dur, .4s) ease;
   }
-  .row.shown { opacity: 1; transform: none; }
+  /* Enter/exit states. Which pair applies is driven by the animation mode
+     class on <body> (a-slide / a-fade); a-none uses no transitions at all. */
+  body.a-none .row { transition: none; }
+  .row.pre-enter { opacity: 0; }
+  body.a-slide .row.pre-enter { transform: translateY(1.2em); }
+  .row.exiting { opacity: 0; }
+  body.a-slide .row.exiting { transform: translateX(-2.5em); }
+
   .pos {
     font-weight: 700;
     min-width: 1.4em;
@@ -60,17 +65,36 @@
                       text-shadow: 0 1px 3px rgba(0,0,0,.6); }
 </style>
 </head>
-<body class="p-{{ opts.preset }}">
+<body class="p-{{ opts.preset }} a-{{ opts.animation }}">
 <div id="queue"></div>
 <script>
   const QS = {{ qs | tojson }};
   const POLL_MS = 5000;
   const queueEl = document.getElementById("queue");
-  let lastPayload = "";
+
+  // key -> row element currently in the DOM, in display order.
+  const rows = new Map();
+  let lastItems = "";
+  let lastOpts = "";
+  let animating = false;
+  let pendingData = null;
+
+  const esc = s => (s || "").replace(/[&<>"]/g,
+    c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+  // Queue item id is the stable identity; fall back to song+slot for the
+  // unlikely case the API omits it.
+  const keyOf = it => it.id != null
+    ? "id:" + it.id
+    : `${it.title}|${it.artist}|${it.position}`;
+
+  function durations(o) {
+    if (o.animation === "none") return { exit: 0, move: 0, enter: 0, stagger: 0 };
+    const f = o.anim_speed === "fast" ? 0.5 : 1;
+    return { exit: 400 * f, move: 400 * f, enter: 300 * f, stagger: 60 * f };
+  }
 
   function rowHtml(item, o) {
-    const esc = s => (s || "").replace(/[&<>"]/g,
-      c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
     let h = "";
     if (o.show_position)
       h += `<div class="pos" style="color:${esc(o.accent)}">${item.position}</div>`;
@@ -85,20 +109,120 @@
     return h;
   }
 
-  function render(data) {
-    const o = data.options;
-    document.body.className = "p-" + o.preset;
+  function applyPageStyle(o, d) {
+    document.body.className = `p-${o.preset} a-${o.animation}`;
     document.body.style.fontSize = o.font_size + "px";
+    document.body.style.setProperty("--dur", (d.move / 1000) + "s");
     queueEl.style.gap = o.row_gap + "px";
+  }
 
-    queueEl.innerHTML = "";
-    data.items.forEach((item, i) => {
-      const row = document.createElement("div");
-      row.className = "row";
-      row.innerHTML = rowHtml(item, o);
-      queueEl.appendChild(row);
-      setTimeout(() => row.classList.add("shown"), 40 * i + 30);
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const reflow = el => void el.offsetHeight;
+
+  async function transition(items, o) {
+    const d = durations(o);
+    applyPageStyle(o, d);
+
+    const newKeys = new Set(items.map(keyOf));
+    const exiting = [...rows.entries()].filter(([k]) => !newKeys.has(k));
+    const entering = items.filter(it => !rows.has(keyOf(it)));
+
+    // 1. Exit: fade / slide out the departed rows, then drop them.
+    if (exiting.length) {
+      if (d.exit) {
+        exiting.forEach(([, el]) => el.classList.add("exiting"));
+        await wait(d.exit);
+      }
+      exiting.forEach(([k, el]) => { el.remove(); rows.delete(k); });
+    }
+
+    // 2. Move (FLIP): record where the surviving rows are, reorder/refresh the
+    // DOM instantly, transform each row back to its old spot, then release.
+    const survivors = items.filter(it => rows.has(keyOf(it)));
+    const firstRects = new Map(
+      survivors.map(it => [keyOf(it), rows.get(keyOf(it)).getBoundingClientRect()])
+    );
+    survivors.forEach(it => {
+      const el = rows.get(keyOf(it));
+      el.innerHTML = rowHtml(it, o);   // position number etc. may have changed
+      queueEl.appendChild(el);         // re-append in new order
     });
+    let moved = false;
+    if (d.move) {
+      survivors.forEach(it => {
+        const el = rows.get(keyOf(it));
+        const dy = firstRects.get(keyOf(it)).top - el.getBoundingClientRect().top;
+        if (Math.abs(dy) > 1) {
+          moved = true;
+          el.style.transition = "none";
+          el.style.transform = `translateY(${dy}px)`;
+        }
+      });
+      if (moved) {
+        reflow(queueEl);
+        survivors.forEach(it => {
+          const el = rows.get(keyOf(it));
+          el.style.transition = "";
+          el.style.transform = "";
+        });
+        await wait(d.move);
+      }
+    }
+
+    // 3. Enter: new rows appear at their slots (usually the bottom), staggered.
+    // DOM order must match item order, so rebuild the sequence with the new
+    // rows included.
+    if (entering.length) {
+      items.forEach(it => {
+        const k = keyOf(it);
+        let el = rows.get(k);
+        if (!el) {
+          el = document.createElement("div");
+          el.className = "row pre-enter";
+          el.innerHTML = rowHtml(it, o);
+          rows.set(k, el);
+        }
+        queueEl.appendChild(el);
+      });
+      reflow(queueEl);
+      let i = 0;
+      for (const it of entering) {
+        const el = rows.get(keyOf(it));
+        setTimeout(() => el.classList.remove("pre-enter"), d.stagger * i++ + 30);
+      }
+      await wait(d.enter + d.stagger * entering.length);
+    }
+  }
+
+  async function render(data) {
+    const itemsJson = JSON.stringify(data.items);
+    const optsJson = JSON.stringify(data.options);
+    if (itemsJson === lastItems && optsJson === lastOpts) return;
+    const itemsChanged = itemsJson !== lastItems;
+    lastItems = itemsJson;
+    lastOpts = optsJson;
+
+    animating = true;
+    try {
+      if (itemsChanged) {
+        await transition(data.items, data.options);
+      } else {
+        // Style-only change (dashboard settings save): restyle in place.
+        const o = data.options;
+        applyPageStyle(o, durations(o));
+        data.items.forEach(it => {
+          const el = rows.get(keyOf(it));
+          if (el) el.innerHTML = rowHtml(it, o);
+        });
+      }
+    } finally {
+      animating = false;
+    }
+    if (pendingData) {
+      const next = pendingData;
+      pendingData = null;
+      render(next);
+    }
   }
 
   async function poll() {
@@ -106,11 +230,8 @@
       const resp = await fetch("/overlay/queue.json" + (QS ? "?" + QS : ""));
       if (resp.ok) {
         const data = await resp.json();
-        const payload = JSON.stringify(data);
-        if (payload !== lastPayload) {   // only re-render (and re-animate) on change
-          lastPayload = payload;
-          render(data);
-        }
+        if (animating) pendingData = data;   // finish the current sequence first
+        else render(data);
       }
     } catch (e) { /* dashboard briefly down — keep last render */ }
     setTimeout(poll, POLL_MS);

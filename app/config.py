@@ -62,6 +62,8 @@ DEFAULT_CONFIG = {
         "art_size": 56,          # px, artwork thumbnail square
         "row_gap": 10,           # px between rows
         "accent": "#4da3ff",     # position number / highlight colour
+        "animation": "slide",    # slide | fade | none
+        "anim_speed": "normal",  # normal | fast
     },
     "reflection": {
         "enabled": True,

@@ -541,6 +541,8 @@ def api_runtime_status():
 _OVERLAY_STATUSES = (STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_UNVERIFIED)
 
 _OVERLAY_PRESETS = ("dark", "light", "minimal", "glass")
+_OVERLAY_ANIMATIONS = ("slide", "fade", "none")
+_OVERLAY_SPEEDS = ("normal", "fast")
 
 # Query-param overrides so one config can drive multiple differently-styled
 # browser sources: bools are 0/1, e.g. /overlay/queue?max=3&current=0&preset=glass
@@ -573,6 +575,10 @@ def overlay_options(cfg: dict, args) -> dict:
                 pass
     if args.get("preset") in _OVERLAY_PRESETS:
         opts["preset"] = args.get("preset")
+    if args.get("anim") in _OVERLAY_ANIMATIONS:
+        opts["animation"] = args.get("anim")
+    if args.get("speed") in _OVERLAY_SPEEDS:
+        opts["anim_speed"] = args.get("speed")
     if args.get("accent"):
         opts["accent"] = args.get("accent")
     return opts
@@ -636,7 +642,8 @@ def overlay_settings_page():
     opts = overlay_options(cfg, {})
     overlay_url = url_for("overlay_queue_page", _external=True)
     return render_template("overlay_settings.html", opts=opts, cfg=cfg,
-                           overlay_url=overlay_url, presets=_OVERLAY_PRESETS)
+                           overlay_url=overlay_url, presets=_OVERLAY_PRESETS,
+                           animations=_OVERLAY_ANIMATIONS, speeds=_OVERLAY_SPEEDS)
 
 
 @app.route("/overlay", methods=["POST"])
@@ -660,6 +667,10 @@ def save_overlay_settings():
             opts[key] = default
     preset = form.get("preset", "dark")
     opts["preset"] = preset if preset in _OVERLAY_PRESETS else "dark"
+    animation = form.get("animation", "slide")
+    opts["animation"] = animation if animation in _OVERLAY_ANIMATIONS else "slide"
+    speed = form.get("anim_speed", "normal")
+    opts["anim_speed"] = speed if speed in _OVERLAY_SPEEDS else "normal"
     opts["accent"] = form.get("accent", "#4da3ff").strip() or "#4da3ff"
 
     config.save_config(cfg)

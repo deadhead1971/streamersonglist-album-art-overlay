@@ -22,7 +22,9 @@
     "font_size": 20,
     "art_size": 56,
     "row_gap": 10,
-    "accent": "#4da3ff"
+    "accent": "#4da3ff",
+    "animation": "slide",
+    "anim_speed": "normal"
   },
   "reflection": {
     "enabled": true,

@@ -173,6 +173,9 @@ def queue_item_view(item: dict, position: int) -> dict:
                 names.append(r.strip())
 
     return {
+        # Queue item id — stable identity for overlay row animations (survives
+        # position changes; distinguishes the same song queued twice).
+        "id": item.get("id"),
         "position": item.get("position", position),
         "title": title,
         "artist": artist,
