@@ -66,6 +66,20 @@ def merge_songlist(lib: Library, songs: list) -> int:
         entry["active"] = song.get("active", True)
         if not existed:
             added += 1
+        elif entry["title"] != title or entry["artist"] != artist:
+            # Same normalised key but the SSL spelling changed (case, accents,
+            # punctuation, bracketed parts). Adopt the new spelling — searches
+            # are built from these fields — and, unless artwork is already
+            # confirmed, reset the search state so a re-propose uses it.
+            entry["title"] = title
+            entry["artist"] = artist
+            if entry.get("status") != "confirmed":
+                entry["candidates"] = []
+                entry["candidate_index"] = 0
+                entry["candidates_tried"] = []
+                if entry.get("status") == "rejected_all":
+                    entry["status"] = None
+            lib.touch(entry)
 
     lib.save()
     SONGLIST_SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
