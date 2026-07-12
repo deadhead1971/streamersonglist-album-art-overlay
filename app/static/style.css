@@ -61,6 +61,9 @@ legend { padding: 0 8px; color: var(--accent); font-size: 13px; }
 
 .flash { padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; }
 .flash.ok { background: #17351f; color: var(--ok); }
+.flash.welcome { background: #1d2a4a; color: var(--text); border: 1px solid var(--accent2); }
+.path-row { display: flex; gap: 8px; }
+.path-row input { flex: 1; }
 .ok { color: var(--ok); } .err { color: var(--err); }
 
 .progress { height: 8px; background: var(--panel2); border-radius: 5px; margin: 10px 0; overflow: hidden; }

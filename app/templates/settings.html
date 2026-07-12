@@ -5,6 +5,16 @@
 <div class="panel">
   <h1>Settings</h1>
   {% if request.args.get('saved') %}<div class="flash ok">Settings saved.</div>{% endif %}
+  {% if needs_setup %}
+  <div class="flash welcome">
+    <strong>Welcome!</strong> Two things to set up:
+    <strong>1.</strong> Enter your StreamerSonglist username (or songlist URL)
+    below and click <em>Test connection</em>.
+    <strong>2.</strong> Under <em>Files</em>, choose where the output image
+    (the artwork OBS displays) should be saved, and pick a fallback image of
+    your own. Then save — everything else has sensible defaults.
+  </div>
+  {% endif %}
 
   <form method="post" action="{{ url_for('save_settings') }}" class="form">
     <fieldset>
@@ -41,15 +51,30 @@
 
     <fieldset>
       <legend>Files</legend>
-      <label>Song file (only for the "Text file" source above)
-        <input type="text" name="song_file" value="{{ cfg.song_file }}"
-               placeholder="D:\Twitch Streaming\current song.txt"></label>
+      <div id="song-file-row" style="display:none">
+        <label>Song file
+          <span class="path-row">
+            <input type="text" name="song_file" value="{{ cfg.song_file }}"
+                   placeholder="C:\path\to\current song.txt">
+            <button type="button" class="secondary browse-btn" data-target="song_file"
+                    data-kind="open" data-filetypes="Text files:*.txt;All files:*.*">Browse…</button>
+          </span></label>
+      </div>
       <label>Output image (what OBS displays)
-        <input type="text" name="output_image" value="{{ cfg.output_image }}"
-               placeholder="D:\Twitch Streaming\current_artwork.png"></label>
+        <span class="path-row">
+          <input type="text" name="output_image" value="{{ cfg.output_image }}"
+                 placeholder="C:\path\to\current_artwork.png">
+          <button type="button" class="secondary browse-btn" data-target="output_image"
+                  data-kind="save" data-initialfile="current_artwork.png"
+                  data-filetypes="PNG image:*.png">Browse…</button>
+        </span></label>
       <label>Fallback image (shown for your own songs / misses)
-        <input type="text" name="fallback_image" value="{{ cfg.fallback_image }}"
-               placeholder="D:\Twitch Streaming\default_artwork.png"></label>
+        <span class="path-row">
+          <input type="text" name="fallback_image" value="{{ cfg.fallback_image }}"
+                 placeholder="C:\path\to\default_artwork.png">
+          <button type="button" class="secondary browse-btn" data-target="fallback_image"
+                  data-kind="open" data-filetypes="Images:*.png *.jpg *.jpeg;All files:*.*">Browse…</button>
+        </span></label>
     </fieldset>
 
     <fieldset>
@@ -83,6 +108,35 @@
 </div>
 
 <script>
+function updateSongFileVisibility() {
+  const fileSelected = document.querySelector('[name=song_source][value=file]').checked;
+  document.getElementById('song-file-row').style.display = fileSelected ? '' : 'none';
+}
+document.querySelectorAll('[name=song_source]').forEach(el => {
+  el.addEventListener('change', updateSongFileVisibility);
+});
+updateSongFileVisibility();
+
+document.querySelectorAll('.browse-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const input = document.querySelector(`[name=${btn.dataset.target}]`);
+    btn.disabled = true;
+    try {
+      const r = await fetch('{{ url_for("api_browse") }}', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          kind: btn.dataset.kind,
+          initialfile: btn.dataset.initialfile || '',
+          filetypes: btn.dataset.filetypes || ''
+        })
+      });
+      const d = await r.json();
+      if (d.ok && d.path) input.value = d.path.replace(/\//g, '\\');
+    } catch (e) { /* dialog cancelled or failed — leave the field as is */ }
+    btn.disabled = false;
+  });
+});
+
 document.getElementById('test-btn').addEventListener('click', async () => {
   const el = document.getElementById('test-result');
   const username = document.querySelector('[name=streamersonglist_username]').value;

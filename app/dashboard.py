@@ -8,6 +8,8 @@ request handlers never block on it.
 
 import json
 import logging
+import subprocess
+import sys
 import threading
 import time
 import webbrowser
@@ -215,7 +217,9 @@ def index():
 
 @app.route("/settings")
 def settings_page():
-    return render_template("settings.html", cfg=config.load_config())
+    cfg = config.load_config()
+    return render_template("settings.html", cfg=cfg,
+                           needs_setup=not cfg.get("streamersonglist_username"))
 
 
 @app.route("/settings", methods=["POST"])
@@ -260,17 +264,24 @@ def save_settings():
 
 @app.route("/songs")
 def songs_page():
-    return render_template("songs.html", cfg=config.load_config())
+    cfg = config.load_config()
+    if not cfg.get("streamersonglist_username"):
+        return redirect(url_for("settings_page"))
+    return render_template("songs.html", cfg=cfg)
 
 
 @app.route("/review")
 def review_page():
+    if not config.load_config().get("streamersonglist_username"):
+        return redirect(url_for("settings_page"))
     return render_template("review.html", mode="review",
                            title="Review proposed artwork")
 
 
 @app.route("/queue")
 def queue_page():
+    if not config.load_config().get("streamersonglist_username"):
+        return redirect(url_for("settings_page"))
     return render_template("review.html", mode="queue",
                            title="Review queue (live grabs)")
 
@@ -278,6 +289,50 @@ def queue_page():
 # ---------------------------------------------------------------------------
 # API routes
 # ---------------------------------------------------------------------------
+
+# Native file dialogs: the dashboard only ever runs on the streamer's own
+# machine (Flask binds 127.0.0.1), so the server can pop a Windows file picker
+# and hand the chosen path back to the page. Tkinter must own the main thread
+# of its interpreter, which Flask request threads are not — so each dialog runs
+# in a short-lived subprocess. A lock stops double-clicks stacking dialogs.
+_BROWSE_LOCK = threading.Lock()
+
+_BROWSE_SCRIPT = """
+import sys, tkinter, tkinter.filedialog as fd
+root = tkinter.Tk(); root.withdraw(); root.attributes("-topmost", True)
+kind, initial, filetypes = sys.argv[1], sys.argv[2], sys.argv[3]
+types = [tuple(t.split(":", 1)) for t in filetypes.split(";")] if filetypes else []
+opts = {"parent": root, "initialfile": initial, "filetypes": types or [("All files", "*.*")]}
+if kind == "save":
+    path = fd.asksaveasfilename(defaultextension=".png", **opts)
+else:
+    path = fd.askopenfilename(**opts)
+print(path or "")
+"""
+
+
+@app.route("/api/browse", methods=["POST"])
+def api_browse():
+    data = request.json or {}
+    kind = "save" if data.get("kind") == "save" else "open"
+    initial = str(data.get("initialfile", ""))
+    filetypes = str(data.get("filetypes", ""))
+    if not _BROWSE_LOCK.acquire(blocking=False):
+        return jsonify({"ok": False, "error": "A file dialog is already open"}), 409
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", _BROWSE_SCRIPT, kind, initial, filetypes],
+            capture_output=True, text=True, timeout=300,
+        )
+        path = result.stdout.strip()
+        if result.returncode != 0:
+            return jsonify({"ok": False, "error": "File dialog failed"}), 500
+        return jsonify({"ok": True, "path": path})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "File dialog timed out"}), 500
+    finally:
+        _BROWSE_LOCK.release()
+
 
 @app.route("/api/test-connection", methods=["POST"])
 def api_test_connection():
