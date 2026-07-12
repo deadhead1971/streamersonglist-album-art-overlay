@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A tool for music streamers using StreamerSonglist. Two halves sharing one artwork library:
 
-1. **Dashboard** (`python -m app.dashboard`, or `run_dashboard.bat`) — local Flask app at `http://127.0.0.1:5050`. Syncs the songlist from the StreamerSonglist API, bulk-proposes artwork via iTunes Search, and provides a review UI to confirm/reject/upload images.
-2. **Watcher** (`python -m app.watcher`, or `run_watcher.bat` / `fetch_once.bat`) — headless runtime launched at stream start (by TouchPortal). Resolves the current song (default: top of the live SSL queue; alternative: a watched text file) and writes `current_artwork.png` for OBS.
+1. **Dashboard** (`python -m app.dashboard`, or `run_dashboard.bat`) — local Flask app at `http://127.0.0.1:5050`. Syncs the songlist from the StreamerSonglist API, bulk-proposes artwork via iTunes Search, and provides a review UI to confirm/reject/upload images. On startup it also launches the **runtime service** (`app/runtime.py`): a background thread that polls the live SSL queue, writes `current_artwork.png` for OBS, and feeds the **queue overlay** (`/overlay/queue`, an OBS browser source; configured at `/overlay`). The dashboard is therefore the one process needed during a live stream.
+2. **Watcher** (`python -m app.watcher`, or `run_watcher.bat` / `fetch_once.bat`) — standalone headless runtime for PNG-only use without the dashboard (or for the `file` song source). Same lookup logic; no overlay.
 
 `PLAN.md` is the original build plan — the authoritative record of design decisions (API facts, rate limits, validation rules). `README.md` is user-facing.
 
@@ -31,7 +31,8 @@ Modules in `app/`:
 - `artwork.py` — shared propose/fetch logic used by both dashboard and watcher.
 - `imaging.py` — resize, reflection effect, and the **atomic PNG save with PermissionError retry** (OBS holds a read handle on the output file — keep this exactly as is).
 - `watcher.py` — runtime loop. Lookup order: skip_artists → fallback; library (confirmed, else proposed/unverified); live cascade (result saved as `unverified` for post-stream review); fallback + `rejected_all` stub.
-- `dashboard.py` — Flask routes; templates in `app/templates/`, CSS in `app/static/`.
+- `runtime.py` — the watcher loop as an in-process background service (started by the dashboard). One queue poll per interval feeds both the PNG output (reuses `watcher.resolve_artwork_for_song`) and the cached queue behind `/overlay/queue.json`. Creates a fresh `Library` per resolve; all manifest I/O is serialised via `library.MANIFEST_LOCK`. In `file` song-source mode it polls the queue for the overlay but leaves the PNG to the standalone watcher.
+- `dashboard.py` — Flask routes; templates in `app/templates/`, CSS in `app/static/`. Overlay routes: `/overlay` (settings + OBS URL), `/overlay/queue` (transparent browser-source page; style presets, config-driven with query-param overrides), `/overlay/queue.json` (data; never triggers artwork fetches — library hit or fallback only).
 
 ### Key joints
 

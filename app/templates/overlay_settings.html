@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% set active = 'overlay' %}
+{% block title %}Queue overlay{% endblock %}
+{% block content %}
+<div class="panel">
+  <h1>Queue overlay</h1>
+  {% if request.args.get('saved') %}<div class="flash ok">Overlay settings saved.</div>{% endif %}
+
+  <div class="flash welcome">
+    <strong>Add to OBS:</strong> create a <em>Browser</em> source with the URL
+    below (suggested size: 500 × 800, transparent background is automatic).
+    <strong>This dashboard must be running while you're live</strong> — it
+    serves the overlay and keeps the queue updated.
+    <div class="row" style="margin-top:.5em">
+      <input type="text" id="overlay-url" readonly value="{{ overlay_url }}"
+             style="flex:1" onclick="this.select()">
+      <button type="button" class="secondary" id="copy-btn">Copy URL</button>
+    </div>
+  </div>
+
+  <div class="overlay-layout">
+    <form method="post" action="{{ url_for('save_overlay_settings') }}" class="form">
+      <fieldset>
+        <legend>Songs</legend>
+        <label>Max songs shown
+          <input type="number" name="max_songs" value="{{ opts.max_songs }}" min="1" max="20"></label>
+        <label class="checkbox"><input type="checkbox" name="include_current"
+               {{ 'checked' if opts.include_current }}>
+          Include the current song (queue position 1)</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Fields</legend>
+        <label class="checkbox"><input type="checkbox" name="show_artwork"
+               {{ 'checked' if opts.show_artwork }}> Artwork</label>
+        <label class="checkbox"><input type="checkbox" name="show_position"
+               {{ 'checked' if opts.show_position }}> Position number</label>
+        <label class="checkbox"><input type="checkbox" name="show_title"
+               {{ 'checked' if opts.show_title }}> Song title</label>
+        <label class="checkbox"><input type="checkbox" name="show_artist"
+               {{ 'checked' if opts.show_artist }}> Artist</label>
+        <label class="checkbox"><input type="checkbox" name="show_requester"
+               {{ 'checked' if opts.show_requester }}> Requested by</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Style</legend>
+        <label>Preset
+          <select name="preset">
+            {% for p in presets %}
+            <option value="{{ p }}" {{ 'selected' if opts.preset == p }}>{{ p }}</option>
+            {% endfor %}
+          </select></label>
+        <div class="grid">
+          <label>Font size (px) <input type="number" name="font_size" value="{{ opts.font_size }}" min="8" max="72"></label>
+          <label>Art size (px) <input type="number" name="art_size" value="{{ opts.art_size }}" min="16" max="300"></label>
+          <label>Row gap (px) <input type="number" name="row_gap" value="{{ opts.row_gap }}" min="0" max="100"></label>
+          <label>Accent colour <input type="color" name="accent" value="{{ opts.accent }}"></label>
+        </div>
+      </fieldset>
+
+      <button type="submit" class="primary">Save overlay settings</button>
+      <p class="muted">Changes apply to OBS within a few seconds of saving —
+        no need to touch the browser source. You can also override options per
+        source with URL parameters, e.g.
+        <code>?max=3&amp;current=0&amp;preset=glass</code>.</p>
+    </form>
+
+    <div class="overlay-preview">
+      <h2>Preview</h2>
+      <iframe id="preview" src="{{ url_for('overlay_queue_page') }}"
+              title="Overlay preview"></iframe>
+      <p class="muted">Shown over a checkerboard — in OBS the background is
+        transparent. The preview uses your live queue; if it's empty, queue a
+        few songs on StreamerSonglist to see it populated.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('copy-btn').addEventListener('click', async () => {
+  const input = document.getElementById('overlay-url');
+  input.select();
+  try { await navigator.clipboard.writeText(input.value); } catch (e) { document.execCommand('copy'); }
+  const btn = document.getElementById('copy-btn');
+  btn.textContent = 'Copied!';
+  setTimeout(() => btn.textContent = 'Copy URL', 1500);
+});
+</script>
+{% endblock %}

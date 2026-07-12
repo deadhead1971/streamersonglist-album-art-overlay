@@ -9,6 +9,21 @@
   "itunes_country": "GB",
   "lastfm_api_key": "",
   "image_size": 640,
+  "runtime_service": true,
+  "overlay": {
+    "max_songs": 5,
+    "include_current": true,
+    "show_artwork": true,
+    "show_title": true,
+    "show_artist": true,
+    "show_requester": true,
+    "show_position": true,
+    "preset": "dark",
+    "font_size": 20,
+    "art_size": 56,
+    "row_gap": 10,
+    "accent": "#4da3ff"
+  },
   "reflection": {
     "enabled": true,
     "height": 0.6,

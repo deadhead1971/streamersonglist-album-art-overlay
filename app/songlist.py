@@ -149,6 +149,37 @@ def _queue_item_song(item: dict):
     return None
 
 
+def queue_item_view(item: dict, position: int) -> dict:
+    """
+    Flatten one queue item for the overlay: {position, title, artist, requester}.
+    Returns None if the item has no usable song. ``requests`` is a list of
+    {name, ...} — multiple requesters are joined. The field is handled
+    defensively because its shape isn't formally documented.
+    """
+    parsed = _queue_item_song(item)
+    if parsed is None:
+        return None
+    title, artist = parsed
+
+    names = []
+    reqs = item.get("requests")
+    if isinstance(reqs, list):
+        for r in reqs:
+            if isinstance(r, dict):
+                name = (r.get("name") or "").strip()
+                if name:
+                    names.append(name)
+            elif isinstance(r, str) and r.strip():
+                names.append(r.strip())
+
+    return {
+        "position": item.get("position", position),
+        "title": title,
+        "artist": artist,
+        "requester": ", ".join(names),
+    }
+
+
 def fetch_current_song(streamer_id):
     """
     Return (title, artist) for the song at the top of the queue (position 1),

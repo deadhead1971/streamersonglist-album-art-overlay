@@ -45,6 +45,24 @@ DEFAULT_CONFIG = {
     "itunes_country": "GB",
     "lastfm_api_key": "",
     "image_size": 640,
+    # Start the in-process runtime service (queue poller + PNG writer) when the
+    # dashboard launches. Disable if you only ever run the standalone watcher.
+    "runtime_service": True,
+    # Queue overlay (OBS browser source at /overlay/queue).
+    "overlay": {
+        "max_songs": 5,
+        "include_current": True,
+        "show_artwork": True,
+        "show_title": True,
+        "show_artist": True,
+        "show_requester": True,
+        "show_position": True,
+        "preset": "dark",        # dark | light | minimal | glass
+        "font_size": 20,         # px, base text size
+        "art_size": 56,          # px, artwork thumbnail square
+        "row_gap": 10,           # px between rows
+        "accent": "#4da3ff",     # position number / highlight colour
+    },
     "reflection": {
         "enabled": True,
         "height": 0.6,

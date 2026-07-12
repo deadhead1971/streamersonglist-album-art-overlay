@@ -47,6 +47,14 @@
         Text file — watch a file another tool (bot, TouchPortal, …) writes the
         current song to. Set the path below.
       </label>
+      <label class="checkbox">
+        <input type="checkbox" name="runtime_service"
+               {{ 'checked' if cfg.runtime_service }}>
+        Run the live service inside this dashboard — updates the output image
+        and the queue overlay while the dashboard is open (recommended; the
+        standalone watcher is then only needed if you don't run the dashboard
+        during streams).
+      </label>
     </fieldset>
 
     <fieldset>

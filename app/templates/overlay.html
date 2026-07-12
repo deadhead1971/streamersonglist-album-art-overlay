@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Queue overlay</title>
+<style>
+  /* Transparent page for OBS browser source. Styling is applied per-render
+     from the options in queue.json, so dashboard changes go live without
+     touching OBS. */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: transparent; overflow: hidden; }
+  body {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    padding: 8px;
+  }
+  #queue { display: flex; flex-direction: column; }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    border-radius: 10px;
+    padding: 0.35em 0.6em;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity .5s ease, transform .5s ease;
+  }
+  .row.shown { opacity: 1; transform: none; }
+  .pos {
+    font-weight: 700;
+    min-width: 1.4em;
+    text-align: center;
+    flex: none;
+  }
+  .art {
+    object-fit: cover;
+    border-radius: 6px;
+    flex: none;
+    background: rgba(0,0,0,.4);
+  }
+  .meta { min-width: 0; }
+  .title, .artist, .requester {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .title { font-weight: 600; }
+  .artist { opacity: .85; font-size: .85em; }
+  .requester { opacity: .7; font-size: .75em; font-style: italic; }
+
+  /* Presets */
+  body.p-dark .row { background: rgba(12,12,16,.82); color: #f2f2f2;
+                     box-shadow: 0 2px 8px rgba(0,0,0,.35); }
+  body.p-light .row { background: rgba(250,250,252,.88); color: #16161a;
+                      box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+  body.p-minimal .row { background: none; color: #fff; padding: 0.15em 0;
+                        text-shadow: 0 1px 4px rgba(0,0,0,.9),
+                                     0 0 12px rgba(0,0,0,.6); }
+  body.p-glass .row { background: rgba(255,255,255,.10); color: #fff;
+                      backdrop-filter: blur(10px);
+                      -webkit-backdrop-filter: blur(10px);
+                      border: 1px solid rgba(255,255,255,.18);
+                      text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+</style>
+</head>
+<body class="p-{{ opts.preset }}">
+<div id="queue"></div>
+<script>
+  const QS = {{ qs | tojson }};
+  const POLL_MS = 5000;
+  const queueEl = document.getElementById("queue");
+  let lastPayload = "";
+
+  function rowHtml(item, o) {
+    const esc = s => (s || "").replace(/[&<>"]/g,
+      c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+    let h = "";
+    if (o.show_position)
+      h += `<div class="pos" style="color:${esc(o.accent)}">${item.position}</div>`;
+    if (o.show_artwork)
+      h += `<img class="art" src="${esc(item.art)}" width="${o.art_size}" height="${o.art_size}" alt="">`;
+    let meta = "";
+    if (o.show_title) meta += `<div class="title">${esc(item.title)}</div>`;
+    if (o.show_artist && item.artist) meta += `<div class="artist">${esc(item.artist)}</div>`;
+    if (o.show_requester && item.requester)
+      meta += `<div class="requester">requested by ${esc(item.requester)}</div>`;
+    if (meta) h += `<div class="meta">${meta}</div>`;
+    return h;
+  }
+
+  function render(data) {
+    const o = data.options;
+    document.body.className = "p-" + o.preset;
+    document.body.style.fontSize = o.font_size + "px";
+    queueEl.style.gap = o.row_gap + "px";
+
+    queueEl.innerHTML = "";
+    data.items.forEach((item, i) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.innerHTML = rowHtml(item, o);
+      queueEl.appendChild(row);
+      setTimeout(() => row.classList.add("shown"), 40 * i + 30);
+    });
+  }
+
+  async function poll() {
+    try {
+      const resp = await fetch("/overlay/queue.json" + (QS ? "?" + QS : ""));
+      if (resp.ok) {
+        const data = await resp.json();
+        const payload = JSON.stringify(data);
+        if (payload !== lastPayload) {   // only re-render (and re-animate) on change
+          lastPayload = payload;
+          render(data);
+        }
+      }
+    } catch (e) { /* dashboard briefly down — keep last render */ }
+    setTimeout(poll, POLL_MS);
+  }
+  poll();
+</script>
+</body>
+</html>

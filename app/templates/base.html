@@ -13,9 +13,31 @@
       <a href="{{ url_for('songs_page') }}" class="{{ 'active' if active=='songs' }}">Songs</a>
       <a href="{{ url_for('review_page') }}" class="{{ 'active' if active=='review' }}">Review</a>
       <a href="{{ url_for('queue_page') }}" class="{{ 'active' if active=='queue' }}">Queue</a>
+      <a href="{{ url_for('overlay_settings_page') }}" class="{{ 'active' if active=='overlay' }}">Overlay</a>
       <a href="{{ url_for('settings_page') }}" class="{{ 'active' if active=='settings' }}">Settings</a>
     </nav>
+    <div id="runtime-status" class="runtime-status" title=""></div>
   </header>
+  <script>
+  async function pollRuntimeStatus() {
+    const el = document.getElementById('runtime-status');
+    try {
+      const d = await (await fetch('/api/runtime/status')).json();
+      if (d.running) {
+        const song = d.current_title
+          ? `▶ ${d.current_title}${d.current_artist ? ' — ' + d.current_artist : ''}`
+          : 'queue empty';
+        el.innerHTML = `<span class="dot on"></span> Live service: ${song} · ${d.queue_length} queued`;
+        el.title = d.writes_png ? 'Writing current_artwork.png' : 'Queue only (file mode writes the PNG)';
+      } else {
+        el.innerHTML = `<span class="dot off"></span> Live service off`;
+        el.title = d.error || 'Enable in Settings (username + runtime service)';
+      }
+    } catch (e) { /* leave as-is */ }
+    setTimeout(pollRuntimeStatus, 5000);
+  }
+  pollRuntimeStatus();
+  </script>
   <main>
     {% block content %}{% endblock %}
   </main>

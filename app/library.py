@@ -14,6 +14,7 @@ gone is treated as needing art again (``has_image`` returns False).
 
 import json
 import re
+import threading
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +27,11 @@ STATUS_PROPOSED = "proposed"        # auto-fetched, awaiting review
 STATUS_CONFIRMED = "confirmed"      # user approved
 STATUS_UNVERIFIED = "unverified"    # grabbed live during a stream (review queue)
 STATUS_REJECTED_ALL = "rejected_all"  # user/watcher exhausted candidates, no art
+
+# Process-wide guard for manifest reads/writes: the dashboard's request threads
+# and the background runtime service each hold their own Library instances, so
+# serialise the file I/O to prevent torn writes.
+MANIFEST_LOCK = threading.RLock()
 
 
 # ---------------------------------------------------------------------------
@@ -131,20 +137,22 @@ class Library:
     # -- manifest persistence ------------------------------------------------
 
     def _load_manifest(self) -> dict:
-        if not self.manifest_path.exists():
-            return {}
-        try:
-            data = json.loads(self.manifest_path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-        except (json.JSONDecodeError, OSError):
-            return {}
+        with MANIFEST_LOCK:
+            if not self.manifest_path.exists():
+                return {}
+            try:
+                data = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+                return data if isinstance(data, dict) else {}
+            except (json.JSONDecodeError, OSError):
+                return {}
 
     def save(self) -> None:
-        self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        self.manifest_path.write_text(
-            json.dumps(self._manifest, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        with MANIFEST_LOCK:
+            self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            self.manifest_path.write_text(
+                json.dumps(self._manifest, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
 
     # -- entry access --------------------------------------------------------
 

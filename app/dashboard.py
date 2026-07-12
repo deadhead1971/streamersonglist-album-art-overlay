@@ -6,6 +6,7 @@ iTunes calls) so it runs in a background thread with a polled progress endpoint;
 request handlers never block on it.
 """
 
+import io
 import json
 import logging
 import subprocess
@@ -13,12 +14,14 @@ import sys
 import threading
 import time
 import webbrowser
+from pathlib import Path
 
 from flask import (
     Flask, jsonify, redirect, render_template, request, send_file, url_for,
 )
+from PIL import Image
 
-from . import artwork, config, songlist
+from . import artwork, config, runtime, songlist
 from .library import (
     Library, STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_UNVERIFIED,
     normalize_key,
@@ -264,6 +267,7 @@ def save_settings():
         cfg["poll_interval"] = max(2, int(form.get("poll_interval", 10)))
     except (ValueError, TypeError):
         cfg["poll_interval"] = 10
+    cfg["runtime_service"] = form.get("runtime_service") == "on"
     cfg["song_file"] = form.get("song_file", "").strip()
     cfg["output_image"] = form.get("output_image", "").strip()
     cfg["fallback_image"] = form.get("fallback_image", "").strip()
@@ -287,6 +291,11 @@ def save_settings():
             pass
 
     config.save_config(cfg)
+    # Pick up the new username/source/interval without an app restart.
+    if cfg.get("runtime_service", True) and cfg.get("streamersonglist_username"):
+        runtime.service.restart(cfg)
+    else:
+        runtime.service.stop()
     return redirect(url_for("settings_page", saved=1))
 
 
@@ -519,11 +528,153 @@ def serve_image():
 
 
 # ---------------------------------------------------------------------------
+# Runtime service + queue overlay
+# ---------------------------------------------------------------------------
+
+@app.route("/api/runtime/status")
+def api_runtime_status():
+    return jsonify(runtime.service.status())
+
+
+# Statuses whose stored image the overlay will show (mirrors the watcher's
+# USABLE_STATUSES — rejected_all means the user turned everything down).
+_OVERLAY_STATUSES = (STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_UNVERIFIED)
+
+_OVERLAY_PRESETS = ("dark", "light", "minimal", "glass")
+
+# Query-param overrides so one config can drive multiple differently-styled
+# browser sources: bools are 0/1, e.g. /overlay/queue?max=3&current=0&preset=glass
+_OVERLAY_BOOL_KEYS = {
+    "current": "include_current",
+    "art": "show_artwork",
+    "title": "show_title",
+    "artist": "show_artist",
+    "requester": "show_requester",
+    "position": "show_position",
+}
+
+
+def overlay_options(cfg: dict, args) -> dict:
+    """Effective overlay options: config defaults + query-string overrides."""
+    opts = dict(config.DEFAULT_CONFIG["overlay"])
+    opts.update(cfg.get("overlay", {}))
+
+    for param, key in _OVERLAY_BOOL_KEYS.items():
+        if param in args:
+            opts[key] = args.get(param) not in ("0", "false", "no", "")
+    for param, key, lo, hi in (("max", "max_songs", 1, 20),
+                               ("font_size", "font_size", 8, 72),
+                               ("art_size", "art_size", 16, 300),
+                               ("row_gap", "row_gap", 0, 100)):
+        if param in args:
+            try:
+                opts[key] = min(hi, max(lo, int(args.get(param))))
+            except (TypeError, ValueError):
+                pass
+    if args.get("preset") in _OVERLAY_PRESETS:
+        opts["preset"] = args.get("preset")
+    if args.get("accent"):
+        opts["accent"] = args.get("accent")
+    return opts
+
+
+@app.route("/overlay/queue.json")
+def overlay_queue_json():
+    cfg = config.load_config()
+    opts = overlay_options(cfg, request.args)
+
+    items = runtime.service.get_queue(cfg)
+    if not opts["include_current"]:
+        items = items[1:]
+    items = items[: opts["max_songs"]]
+
+    lib = Library()
+    rows = []
+    for pos, item in enumerate(items, start=1 if opts["include_current"] else 2):
+        view = songlist.queue_item_view(item, pos)
+        if view is None:
+            continue
+        entry = lib.get(view["title"], view["artist"])
+        if (entry and entry.get("status") in _OVERLAY_STATUSES
+                and lib.has_image(entry)):
+            view["art"] = url_for("serve_image",
+                                  key=normalize_key(view["title"], view["artist"]),
+                                  v=entry.get("updated_at", ""))
+        else:
+            view["art"] = url_for("overlay_fallback_image")
+        rows.append(view)
+
+    return jsonify({"items": rows, "options": opts})
+
+
+@app.route("/overlay/fallback.png")
+def overlay_fallback_image():
+    """The configured fallback image, or a plain dark placeholder square."""
+    cfg = config.load_config()
+    fallback = cfg.get("fallback_image")
+    if fallback and Path(fallback).exists():
+        return send_file(fallback)
+    buf = io.BytesIO()
+    Image.new("RGBA", (300, 300), (30, 30, 30, 255)).save(buf, "PNG")
+    buf.seek(0)
+    return send_file(buf, mimetype="image/png")
+
+
+@app.route("/overlay/queue")
+def overlay_queue_page():
+    cfg = config.load_config()
+    opts = overlay_options(cfg, request.args)
+    return render_template("overlay.html", opts=opts,
+                           qs=request.query_string.decode("utf-8"))
+
+
+@app.route("/overlay")
+def overlay_settings_page():
+    cfg = config.load_config()
+    if not cfg.get("streamersonglist_username"):
+        return redirect(url_for("settings_page"))
+    opts = overlay_options(cfg, {})
+    overlay_url = url_for("overlay_queue_page", _external=True)
+    return render_template("overlay_settings.html", opts=opts, cfg=cfg,
+                           overlay_url=overlay_url, presets=_OVERLAY_PRESETS)
+
+
+@app.route("/overlay", methods=["POST"])
+def save_overlay_settings():
+    cfg = config.load_config()
+    form = request.form
+    opts = cfg.setdefault("overlay", {})
+
+    for key in _OVERLAY_BOOL_KEYS.values():
+        opts[key] = form.get(key) == "on"
+    try:
+        opts["max_songs"] = min(20, max(1, int(form.get("max_songs", 5))))
+    except (TypeError, ValueError):
+        opts["max_songs"] = 5
+    for key, default, lo, hi in (("font_size", 20, 8, 72),
+                                 ("art_size", 56, 16, 300),
+                                 ("row_gap", 10, 0, 100)):
+        try:
+            opts[key] = min(hi, max(lo, int(form.get(key, default))))
+        except (TypeError, ValueError):
+            opts[key] = default
+    preset = form.get("preset", "dark")
+    opts["preset"] = preset if preset in _OVERLAY_PRESETS else "dark"
+    opts["accent"] = form.get("accent", "#4da3ff").strip() or "#4da3ff"
+
+    config.save_config(cfg)
+    return redirect(url_for("overlay_settings_page", saved=1))
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def run(host="127.0.0.1", port=5050, open_browser=True):
     first_run = config.ensure_config()
+    cfg = config.load_config()
+    if cfg.get("runtime_service", True) and cfg.get("streamersonglist_username"):
+        runtime.service.start(cfg)
     if open_browser:
         target = "settings" if first_run else ""
         threading.Timer(

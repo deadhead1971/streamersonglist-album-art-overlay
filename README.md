@@ -76,14 +76,28 @@ On the **Songs** page:
 
 The keyboard shortcuts make reviewing a long list fast.
 
-## 5. During your stream — the watcher
+## 5. During your stream
 
-Launch **`run_watcher.bat`** when your stream starts. By default it polls your
-StreamerSonglist queue every few seconds and, whenever the song at the top
-changes, writes the artwork image for OBS. Keep the song you're playing at the
-top of your queue and the artwork follows automatically. (With the **Text file**
-source it watches your file instead.) When your queue is empty, the fallback
-image is shown.
+Keep the **dashboard** (`run_dashboard.bat`) running while you're live. It runs
+a built-in live service that polls your StreamerSonglist queue every few
+seconds and, whenever the song at the top changes, writes the artwork image for
+OBS. Keep the song you're playing at the top of your queue and the artwork
+follows automatically. When your queue is empty, the fallback image is shown.
+The header shows a status indicator (current song and queue length) so you can
+sanity-check it before going live.
+
+Prefer not to have the dashboard open? The standalone watcher
+(**`run_watcher.bat`**) does the same PNG job headlessly — but the queue
+overlay below needs the dashboard. (With the **Text file** source the live
+service handles the overlay while the standalone watcher watches your file.)
+
+### The queue overlay
+
+The dashboard also serves an **up-next table** for OBS: your queue with
+artwork, title, artist and requester. Open the **Overlay** page in the
+dashboard to style it (presets, fields, sizes, how many songs) with a live
+preview, then copy the URL into an OBS **Browser** source. The background is
+transparent; style changes apply within seconds without touching OBS.
 
 Lookup order for each song:
 
