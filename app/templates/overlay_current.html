@@ -14,18 +14,22 @@
     padding: 8px;
   }
   #stage { display: inline-block; }
+  /* The artwork bleeds flush to the card edges (the card clips it via
+     overflow:hidden); the text column carries the internal padding. This
+     keeps the card hugging its content with no empty frame around the art. */
   .card {
     display: flex;
-    align-items: center;
-    gap: 0.7em;
-    border-radius: 12px;
-    padding: 0.5em 0.7em;
+    align-items: stretch;
+    border-radius: 14px;
+    overflow: hidden;
     transition: opacity var(--dur, .4s) ease, transform var(--dur, .4s) ease;
   }
   body.l-vertical .card {
     flex-direction: column;
-    align-items: flex-start;
   }
+  /* In vertical mode the art defines the card width so text ellipsizes
+     instead of widening the card past the artwork. */
+  body.l-vertical.has-art .card { width: var(--art); }
   /* Enter/exit states, driven by the animation mode class on <body>. */
   body.a-none .card { transition: none; }
   .card.pre-enter { opacity: 0; }
@@ -34,25 +38,34 @@
   body.a-slide .card.exiting { transform: translateX(-2.5em); }
 
   .art {
+    display: block;
     object-fit: cover;
-    border-radius: 8px;
     flex: none;
+    align-self: center;   /* centres the art if the text column is taller */
     background: rgba(0,0,0,.4);
   }
-  .meta { min-width: 0; }
+  .meta {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: .55em 1em .55em .8em;
+    line-height: 1.25;
+  }
+  body.l-vertical .meta { padding: .55em .8em .65em; }
   .label {
-    font-size: .55em;
+    font-size: .5em;
     font-weight: 700;
-    letter-spacing: .12em;
+    letter-spacing: .14em;
     text-transform: uppercase;
-    margin-bottom: .25em;
+    margin-bottom: .3em;
   }
   .title, .artist, .requester {
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .title { font-weight: 600; }
-  .artist { opacity: .85; font-size: .8em; }
-  .requester { opacity: .7; font-size: .65em; font-style: italic; }
+  .title { font-weight: 700; }
+  .artist { opacity: .85; font-size: .78em; margin-top: .1em; }
+  .requester { opacity: .65; font-size: .6em; font-style: italic; margin-top: .35em; }
   .title.placeholder { opacity: .6; font-style: italic; }
 
   /* Presets */
@@ -60,9 +73,14 @@
                       box-shadow: 0 2px 8px rgba(0,0,0,.35); }
   body.p-light .card { background: rgba(250,250,252,.88); color: #16161a;
                        box-shadow: 0 2px 8px rgba(0,0,0,.2); }
-  body.p-minimal .card { background: none; color: #fff; padding: 0.2em 0;
+  /* Minimal has no card surface, so the art keeps its own radius and the
+     text column drops the boxed padding. */
+  body.p-minimal .card { background: none; color: #fff; overflow: visible;
                          text-shadow: 0 1px 4px rgba(0,0,0,.9),
                                       0 0 12px rgba(0,0,0,.6); }
+  body.p-minimal .art { border-radius: 10px; }
+  body.p-minimal .meta { padding: 0 .4em 0 .8em; }
+  body.p-minimal.l-vertical .meta { padding: .45em .1em 0; }
   body.p-glass .card { background: rgba(255,255,255,.10); color: #fff;
                        backdrop-filter: blur(10px);
                        -webkit-backdrop-filter: blur(10px);
@@ -118,8 +136,10 @@
   }
 
   function applyPageStyle(o, d) {
-    document.body.className = `p-${o.preset} a-${o.animation} l-${o.layout}`;
+    document.body.className = `p-${o.preset} a-${o.animation} l-${o.layout}`
+      + (o.show_artwork ? " has-art" : "");
     document.body.style.fontSize = o.font_size + "px";
+    document.body.style.setProperty("--art", o.art_size + "px");
     document.body.style.setProperty("--dur", (Math.max(d.exit, d.enter) / 1000) + "s");
   }
 

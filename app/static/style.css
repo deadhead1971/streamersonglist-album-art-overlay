@@ -136,6 +136,10 @@ table.songs th { color: var(--muted); font-weight: 600; font-size: 13px; }
   /* checkerboard so transparency is visible */
   background: repeating-conic-gradient(#2a2e37 0% 25%, #1c1f26 0% 50%) 0 0 / 24px 24px;
 }
+/* Stacked variant: the now-playing card never wraps its text, so its preview
+   needs the panel's full width to accommodate long titles. */
+.overlay-layout-stacked { grid-template-columns: 1fr; }
+.overlay-layout-stacked .overlay-preview iframe { height: 280px; }
 .form select, .form input[type=color] {
   background: var(--bg); border: 1px solid var(--line); color: var(--text);
   padding: 8px 10px; border-radius: 8px; width: 100%; margin-top: 5px;
