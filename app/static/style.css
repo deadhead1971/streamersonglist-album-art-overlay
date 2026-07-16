@@ -72,7 +72,7 @@ legend { padding: 0 8px; color: var(--accent); font-size: 13px; }
 table.songs { width: 100%; border-collapse: collapse; margin-top: 12px; }
 table.songs th, table.songs td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 table.songs th { color: var(--muted); font-weight: 600; font-size: 13px; }
-.thumb { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; background: var(--panel2); }
+.thumb { width: 66px; height: 66px; object-fit: cover; border-radius: 6px; background: var(--panel2); }
 .thumb.empty { display: inline-block; border: 1px dashed var(--line); }
 .review-link { white-space: nowrap; padding: 4px 10px; border: 1px solid var(--line);
   border-radius: 7px; font-size: 13px; }
