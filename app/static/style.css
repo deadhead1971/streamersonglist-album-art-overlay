@@ -7,7 +7,9 @@
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.5 system-ui, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
 }
+main { flex: 1; width: 100%; }
 a { color: var(--accent); text-decoration: none; }
 
 .topbar {
@@ -145,3 +147,16 @@ table.songs th { color: var(--muted); font-weight: 600; font-size: 13px; }
   padding: 8px 10px; border-radius: 8px; width: 100%; margin-top: 5px;
 }
 .form input[type=color] { padding: 3px; height: 38px; }
+
+/* Ko-fi footer */
+.kofi-footer { display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 12px 24px; font-size: 13px; color: var(--muted);
+  border-top: 1px solid var(--line); flex-wrap: wrap;
+  position: sticky; bottom: 0; z-index: 10; background: var(--panel); }
+main { padding-bottom: 32px; }
+.kofi-button { display: inline-flex; align-items: center; gap: 7px;
+  background: #FF5E5B; color: #fff; font-weight: 600; font-size: 13px;
+  padding: 7px 14px; border-radius: 8px; text-decoration: none;
+  transition: filter .15s ease, transform .15s ease; }
+.kofi-button:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.kofi-cup { width: 18px; height: 18px; }
