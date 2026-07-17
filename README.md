@@ -24,7 +24,11 @@ Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
 
 ## 1. What you need
 
-- **Windows** (the file-saving is tuned for OBS on Windows).
+- **Windows** (built and tested there; the file-saving is tuned for OBS on
+  Windows). **macOS/Linux should work but are untested** — it's plain Python.
+  The `.bat` launchers are Windows-only, so start things from a terminal
+  instead: `python3 -m app.dashboard` (dashboard) or `python3 -m app.watcher`
+  (watcher). If you try it, let me know how it goes via an issue!
 - **Python 3.10 or newer**. Get it from [python.org](https://www.python.org/downloads/).
   During install, tick **"Add Python to PATH"**.
 - A **StreamerSonglist** account with some songs in your list. During a stream,
