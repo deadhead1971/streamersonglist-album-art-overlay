@@ -19,6 +19,8 @@ One app — the **dashboard** — does two jobs:
 Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
 (if you add your own key) and **MusicBrainz / Cover Art Archive**.
 
+![The Songs page: your songlist with confirmed artwork](docs/screenshots/songlist-artwork.png)
+
 ---
 
 ## 1. What you need
@@ -81,6 +83,8 @@ On the **Songs** page:
 
 The keyboard shortcuts make reviewing a long list fast.
 
+![The Review page: proposed artwork with alternative candidates](docs/screenshots/review-artwork.png)
+
 ## 5. During your stream
 
 Keep the **dashboard** (`run_dashboard.bat`) running while you're live. It runs
@@ -100,6 +104,8 @@ artwork, title, artist and requester. Open the **Overlay** page in the
 dashboard to style it (presets, fields, sizes, how many songs) with a live
 preview, then copy the URL into an OBS **Browser** source. The background is
 transparent; style changes apply within seconds without touching OBS.
+
+![The Overlay settings page with live queue preview](docs/screenshots/queue-overlay.png)
 
 Lookup order for each song:
 
