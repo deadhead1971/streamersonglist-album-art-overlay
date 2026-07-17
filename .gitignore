@@ -16,3 +16,6 @@ venv/
 env/
 .idea/
 .vscode/
+
+# Local design notes (kept out of the public repo)
+PLAN.md

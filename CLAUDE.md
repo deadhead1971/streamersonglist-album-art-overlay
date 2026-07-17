@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A tool for music streamers using StreamerSonglist. One app — the **dashboard** (`python -m app.dashboard`, or `run_dashboard.bat`) — a local Flask app at `http://127.0.0.1:5050`. It syncs the songlist from the StreamerSonglist API, bulk-proposes artwork via iTunes Search, and provides a review UI to confirm/reject/upload images. On startup it also launches the **runtime service** (`app/runtime.py`): a background thread that resolves the current song (live SSL queue top, or a text file in `file` song-source mode), writes `current_artwork.png` for OBS, and feeds the **queue overlay** (`/overlay/queue`, an OBS browser source; configured at `/overlay`). The dashboard is the only process, offline and during a live stream. (A standalone headless watcher existed historically; it was folded into the runtime service in July 2026.)
 
-`PLAN.md` is the original build plan — the authoritative record of design decisions (API facts, rate limits, validation rules), though its watcher/file layout is superseded. `README.md` is user-facing.
+`README.md` is user-facing. (`PLAN.md`, the original build plan with design decisions — API facts, rate limits, validation rules — is kept locally and not committed; ignore references to it if you don't have the file.)
 
 ## Commands
 
