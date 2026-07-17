@@ -26,8 +26,8 @@ LOG_FILE = ROOT / "artwork_fetcher.log"
 # MusicBrainz asks that the User-Agent identify the app + a contact URL. Identify
 # the tool and its repo, not the streamer running it.
 USER_AGENT = (
-    "StreamerSonglistArtFetcher/1.0 "
-    "(+https://github.com/deadhead1971/streamersonglist-art-fetcher)"
+    "StreamerSonglistAlbumArtOverlay/1.0 "
+    "(+https://github.com/deadhead1971/streamersonglist-album-art-overlay)"
 )
 
 DEFAULT_CONFIG = {

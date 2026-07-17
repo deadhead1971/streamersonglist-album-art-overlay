@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Art Fetcher{% endblock %} · StreamerSonglist Art Fetcher</title>
+  <title>{% block title %}Album Art Overlay{% endblock %} · StreamerSonglist Album Art Overlay</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">🎨 Art Fetcher</div>
+    <div class="brand">🎨 Album Art Overlay</div>
     <nav>
       <a href="{{ url_for('songs_page') }}" class="{{ 'active' if active=='songs' }}">Songs</a>
       <a href="{{ url_for('review_page') }}" class="{{ 'active' if active=='review' }}">Review</a>
@@ -41,5 +41,16 @@
   <main>
     {% block content %}{% endblock %}
   </main>
+  <footer class="kofi-footer">
+    <span>Enjoying Album Art Overlay? Fuel the next update —</span>
+    <a class="kofi-button" href="https://ko-fi.com/alanthompson_music" target="_blank" rel="noopener">
+      <svg class="kofi-cup" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="#fff" d="M4 4h13a4 4 0 0 1 0 8h-1.1A6.5 6.5 0 0 1 9.5 17h-1A6.5 6.5 0 0 1 2 10.5V6a2 2 0 0 1 2-2zm12 2v4h1a2 2 0 1 0 0-4h-1z"/>
+        <path fill="#FF5E5B" d="M9 7.2c-.9 0-1.6.7-1.6 1.6 0 1.5 2.6 3.2 2.6 3.2s2.6-1.7 2.6-3.2c0-.9-.7-1.6-1.6-1.6-.4 0-.8.2-1 .5-.2-.3-.6-.5-1-.5z"/>
+        <path fill="#fff" d="M3 19h13v2H3z"/>
+      </svg>
+      Buy me a coffee
+    </a>
+  </footer>
 </body>
 </html>

@@ -1,6 +1,7 @@
-# StreamerSonglist Art Fetcher
+# StreamerSonglist Album Art Overlay
 
-Show album artwork on your stream for whatever song you're playing — automatically.
+An OBS overlay for music streamers: album art for the current song, plus a song
+queue overlay, fed live from your StreamerSonglist queue — automatically.
 
 This tool is for music streamers who use [StreamerSonglist](https://www.streamersonglist.com).
 It has two halves:

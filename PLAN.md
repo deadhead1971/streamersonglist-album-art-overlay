@@ -1,4 +1,4 @@
-# StreamerSonglist Art Fetcher — Build Plan
+# StreamerSonglist Album Art Overlay (formerly Art Fetcher) — Build Plan
 
 Handover plan for the implementing agent. Read this whole document before writing code.
 
@@ -31,8 +31,8 @@ rewritten from scratch.
   No PyInstaller.
 - Watcher stays a **separate .bat** (TouchPortal launches it); the dashboard does not need to
   run during streams.
-- Repo: https://github.com/deadhead1971/streamersonglist-art-fetcher (remote already added
-  as `origin` in this folder).
+- Repo: https://github.com/deadhead1971/streamersonglist-album-art-overlay (renamed from
+  `streamersonglist-art-fetcher` 2026-07-17; remote added as `origin` in this folder).
 
 ## Verified API facts (checked 2026-07-11 — trust these, but re-verify pagination)
 
@@ -201,7 +201,7 @@ manifest should tolerate a manually deleted file and treat that entry as needing
 - Bulk propose is long-running: run it in a background thread with a progress endpoint;
   don't block a request handler for 10 minutes.
 - MusicBrainz User-Agent: identify the app + repo URL
-  (`StreamerSonglistArtFetcher/1.0 (+https://github.com/deadhead1971/streamersonglist-art-fetcher)`),
+  (`StreamerSonglistAlbumArtOverlay/1.0 (+https://github.com/deadhead1971/streamersonglist-album-art-overlay)`),
   not the streamer personally.
 - Do not commit: `config.json`, `library/`, logs, or any API key. The old script's Last.fm
   key must not appear anywhere in this repo.
