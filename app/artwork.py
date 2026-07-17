@@ -1,21 +1,167 @@
 """
-Shared artwork orchestration used by BOTH the watcher and the dashboard: turning
-a chosen candidate into a stored library image, and rendering a library image to
-the OBS output file. Keeping this in one place means live grabs and dashboard
+Shared artwork orchestration used by BOTH the runtime service and the dashboard
+request handlers: resolving the current song to an output PNG, turning a chosen
+candidate into a stored library image, and rendering a library image to the OBS
+output file. Keeping this in one place means live grabs and dashboard
 confirmations produce byte-identical library entries.
 """
 
 import logging
+import sys
+from pathlib import Path
 
-from . import imaging, sources
+from PIL import Image
+
+from . import config, imaging, sources
 from .library import (
-    STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_REJECTED_ALL,
+    STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_REJECTED_ALL, STATUS_UNVERIFIED,
 )
 
 log = logging.getLogger("artwork_fetcher")
 
 # Order the dashboard reject-cycle pulls fresh candidates from.
 SOURCE_ORDER = ("itunes", "lastfm", "musicbrainz")
+
+# Library statuses whose stored image the runtime is willing to display, best
+# first. rejected_all is excluded (user rejected everything → go live/fallback).
+USABLE_STATUSES = (STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_UNVERIFIED)
+
+
+def setup_logging():
+    if log.handlers:
+        return
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(config.LOG_FILE, encoding="utf-8"),
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Song file parsing (ported from v2, incl. en/em-dash variants)
+# ---------------------------------------------------------------------------
+
+def read_song_file(path: str, quiet: bool = False):
+    """
+    Read the song file and parse 'Song - Artist'. Returns (song, artist) or
+    None. ``quiet`` suppresses problem logging — the runtime service reads the
+    file every poll tick and logs misses on transition instead.
+    """
+    if not path:
+        if not quiet:
+            log.error("No song_file configured — set it in the dashboard settings")
+        return None
+    try:
+        text = Path(path).read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        if not quiet:
+            log.warning("Song file not found: %s", path)
+        return None
+    except Exception as e:
+        if not quiet:
+            log.error("Error reading song file: %s", e)
+        return None
+
+    if not text:
+        if not quiet:
+            log.info("Song file is empty")
+        return None
+
+    for sep in (" - ", " – ", " — "):  # hyphen, en-dash, em-dash
+        if sep in text:
+            song, artist = text.split(sep, maxsplit=1)
+            return song.strip(), artist.strip()
+    return text, ""
+
+
+# ---------------------------------------------------------------------------
+# Runtime resolve: current song → output PNG
+# ---------------------------------------------------------------------------
+
+def apply_fallback(cfg: dict):
+    """Render the fallback image (or a blank placeholder) to the output path."""
+    output = cfg.get("output_image")
+    if not output:
+        log.error("No output_image configured — cannot write fallback")
+        return
+    fallback = cfg.get("fallback_image")
+    size = int(cfg.get("image_size", 640))
+
+    if fallback and Path(fallback).exists():
+        img = Image.open(fallback).convert("RGBA")
+        if img.size != (size, size):
+            img = img.resize((size, size), Image.Resampling.LANCZOS)
+        log.info("Applied fallback image")
+    else:
+        img = Image.new("RGBA", (size, size), (30, 30, 30, 255))
+        log.info("Applied blank placeholder (no fallback image found)")
+
+    reflection = cfg.get("reflection", {})
+    if reflection.get("enabled", True):
+        img = imaging.add_reflection(img, reflection)
+    imaging.atomic_save_image(img, output)
+
+
+def resolve_artwork_for_song(cfg: dict, lib, song: str, artist: str) -> bool:
+    """
+    Given a resolved (song, artist) — from whatever source — run the lookup
+    order and write the output image. Returns True if artwork was displayed.
+
+    Lookup order:
+      1. skip_artists → fallback image (the streamer's own originals).
+      2. Library lookup (confirmed, or proposed/unverified as
+         better-than-nothing): render library image → atomic save. Done.
+      3. Live cascade iTunes → Last.fm → MusicBrainz: on success, save into the
+         library as ``unverified`` (so it appears in the dashboard review
+         queue), then output it.
+      4. Nothing found → fallback image, and record a ``rejected_all`` stub so
+         the dashboard shows the miss.
+    """
+    log.info("Current song: '%s' by '%s'", song, artist)
+
+    # 1. Own songs → fallback, no search.
+    skip = [a.strip().lower() for a in cfg.get("skip_artists", [])]
+    if artist.strip().lower() in skip:
+        log.info("Own song (artist '%s') — applying fallback", artist)
+        apply_fallback(cfg)
+        return False
+
+    # 2. Library lookup.
+    entry = lib.get(song, artist)
+    if entry and entry.get("status") in USABLE_STATUSES and lib.has_image(entry):
+        log.info("Library hit (%s) — rendering stored art", entry.get("status"))
+        if render_entry_to_output(lib, cfg, entry):
+            return True
+
+    # 3. Live cascade.
+    log.info("No library art — running live cascade")
+    for candidate in sources.search_cascade(artist, song, cfg):
+        raw = try_download(candidate)
+        if raw is None:
+            continue
+        try:
+            entry = store_candidate(
+                lib, song, artist, candidate, STATUS_UNVERIFIED, raw_bytes=raw
+            )
+        except ValueError:
+            continue
+        log.info("Live grab from %s ('%s') — flagged unverified for review",
+                 candidate.get("source"), candidate.get("album"))
+        render_entry_to_output(lib, cfg, entry)
+        return True
+
+    # 4. Nothing found → fallback + record the miss.
+    log.warning("No artwork found for '%s' - '%s'", song, artist)
+    miss = lib.ensure_entry(song, artist)
+    if not lib.has_image(miss):
+        miss["file"] = None
+        lib.set_status(miss, STATUS_REJECTED_ALL)
+        lib.save()
+    apply_fallback(cfg)
+    return False
 
 
 def try_download(candidate: dict):

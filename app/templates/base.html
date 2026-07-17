@@ -28,10 +28,10 @@
           ? `▶ ${d.current_title}${d.current_artist ? ' — ' + d.current_artist : ''}`
           : 'queue empty';
         el.innerHTML = `<span class="dot on"></span> Live service: ${song} · ${d.queue_length} queued`;
-        el.title = d.writes_png ? 'Writing current_artwork.png' : 'Queue only (file mode writes the PNG)';
+        el.title = 'Writing the artwork image and serving the overlays';
       } else {
         el.innerHTML = `<span class="dot off"></span> Live service off`;
-        el.title = d.error || 'Enable in Settings (username + runtime service)';
+        el.title = d.error || 'Enable in Settings (song source + runtime service)';
       }
     } catch (e) { /* leave as-is */ }
     setTimeout(pollRuntimeStatus, 5000);

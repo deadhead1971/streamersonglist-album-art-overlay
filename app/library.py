@@ -5,8 +5,8 @@ Artwork library: the source of truth.
   named human-readably as ``{artist} - {title}.png`` so bad images are easy to
   find and delete/replace by hand.
 - ``library/manifest.json`` maps a NORMALISED key -> entry. The normalisation
-  function is the joint that makes dashboard writes and watcher lookups line up,
-  so both sides must call ``normalize_key`` and nothing else.
+  function is the joint that makes dashboard writes and live-runtime lookups
+  line up, so both sides must call ``normalize_key`` and nothing else.
 
 The manifest tolerates a manually deleted image file: an entry whose ``file`` is
 gone is treated as needing art again (``has_image`` returns False).
@@ -26,7 +26,7 @@ from . import config
 STATUS_PROPOSED = "proposed"        # auto-fetched, awaiting review
 STATUS_CONFIRMED = "confirmed"      # user approved
 STATUS_UNVERIFIED = "unverified"    # grabbed live during a stream (review queue)
-STATUS_REJECTED_ALL = "rejected_all"  # user/watcher exhausted candidates, no art
+STATUS_REJECTED_ALL = "rejected_all"  # user/runtime exhausted candidates, no art
 
 # Process-wide guard for manifest reads/writes: the dashboard's request threads
 # and the background runtime service each hold their own Library instances, so
@@ -35,7 +35,7 @@ MANIFEST_LOCK = threading.RLock()
 
 
 # ---------------------------------------------------------------------------
-# Normalisation — the shared key function (dashboard AND watcher use this)
+# Normalisation — the shared key function (dashboard AND runtime use this)
 # ---------------------------------------------------------------------------
 
 _BRACKETS_RE = re.compile(r"[\(\[\{].*?[\)\]\}]")

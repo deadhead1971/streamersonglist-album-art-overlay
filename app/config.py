@@ -32,11 +32,11 @@ USER_AGENT = (
 
 DEFAULT_CONFIG = {
     "streamersonglist_username": "",
-    # Where the runtime watcher gets the current song:
+    # Where the runtime service gets the current song:
     #   "streamersonglist" (default) — poll the live queue, top slot = now playing
-    #   "file"                        — watch a text file another tool writes
+    #   "file"                        — read a text file another tool writes
     "song_source": "streamersonglist",
-    # Seconds between SSL queue polls (only used when song_source == streamersonglist).
+    # Seconds between runtime service ticks (queue poll / song-file check).
     "poll_interval": 10,
     "song_file": "",
     "output_image": "",
@@ -46,7 +46,7 @@ DEFAULT_CONFIG = {
     "lastfm_api_key": "",
     "image_size": 640,
     # Start the in-process runtime service (queue poller + PNG writer) when the
-    # dashboard launches. Disable if you only ever run the standalone watcher.
+    # dashboard launches. Disable only if you never use the live outputs.
     "runtime_service": True,
     # Queue overlay (OBS browser source at /overlay/queue).
     "overlay": {

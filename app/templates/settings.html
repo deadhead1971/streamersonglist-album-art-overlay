@@ -44,16 +44,15 @@
       <label class="checkbox">
         <input type="radio" name="song_source" value="file"
                {{ 'checked' if cfg.song_source == 'file' }}>
-        Text file — watch a file another tool (bot, TouchPortal, …) writes the
+        Text file — read a file another tool (bot, TouchPortal, …) writes the
         current song to. Set the path below.
       </label>
       <label class="checkbox">
         <input type="checkbox" name="runtime_service"
                {{ 'checked' if cfg.runtime_service }}>
-        Run the live service inside this dashboard — updates the output image
-        and the queue overlay while the dashboard is open (recommended; the
-        standalone watcher is then only needed if you don't run the dashboard
-        during streams).
+        Run the live service — updates the output image and the overlays while
+        the dashboard is open. Leave this on; keep the dashboard running while
+        you stream.
       </label>
     </fieldset>
 

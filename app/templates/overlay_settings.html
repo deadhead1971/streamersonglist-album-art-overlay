@@ -7,23 +7,24 @@
   {% if request.args.get('saved') == '1' %}<div class="flash ok">Queue overlay settings saved.</div>{% endif %}
 
   <div class="flash welcome">
-    <strong>Add to OBS:</strong> create a <em>Browser</em> source with the URL
-    below (suggested size: 500 × 800, transparent background is automatic).
+    <strong>Add to OBS:</strong> create a <em>Browser</em> source, tick
+    <em>Local file</em>, and point it at the loader below (suggested size:
+    500 × 800, transparent background is automatic). The loader waits for the
+    dashboard, so launch order doesn't matter.
     <strong>This dashboard must be running while you're live</strong> — it
     serves the overlay and keeps the queue updated.
     <div class="row" style="margin-top:.5em">
-      <input type="text" id="overlay-url" readonly value="{{ overlay_url }}"
-             style="flex:1" onclick="this.select()">
-      <button type="button" class="secondary copy-btn" data-copy="overlay-url">Copy URL</button>
-    </div>
-    <p class="muted" style="margin:.6em 0 0">If OBS sometimes starts before the
-      dashboard, tick <em>Local file</em> on the browser source instead and
-      point it at the loader below — it waits for the dashboard, so launch
-      order doesn't matter.</p>
-    <div class="row" style="margin-top:.4em">
       <input type="text" id="queue-loader" readonly value="{{ queue_loader }}"
              style="flex:1" onclick="this.select()">
       <button type="button" class="secondary copy-btn" data-copy="queue-loader">Copy path</button>
+    </div>
+    <p class="muted" style="margin:.6em 0 0">Advanced: use this URL instead
+      (untick <em>Local file</em>) if you want per-source overrides via URL
+      parameters — but then OBS must be started after the dashboard.</p>
+    <div class="row" style="margin-top:.4em">
+      <input type="text" id="overlay-url" readonly value="{{ overlay_url }}"
+             style="flex:1" onclick="this.select()">
+      <button type="button" class="secondary copy-btn" data-copy="overlay-url">Copy URL</button>
     </div>
   </div>
 
@@ -109,20 +110,22 @@
 
   <div class="flash welcome">
     <strong>Add to OBS:</strong> a second <em>Browser</em> source showing just
-    the current song with large artwork (suggested size: 600 × 220 horizontal,
-    320 × 480 vertical). Pairs well with the queue overlay above with
+    the current song with large artwork — tick <em>Local file</em> and point
+    it at this loader (suggested size: 600 × 220 horizontal, 320 × 480
+    vertical). Pairs well with the queue overlay above with
     <em>Include the current song</em> unticked.
     <div class="row" style="margin-top:.5em">
-      <input type="text" id="current-url" readonly value="{{ current_url }}"
-             style="flex:1" onclick="this.select()">
-      <button type="button" class="secondary copy-btn" data-copy="current-url">Copy URL</button>
-    </div>
-    <p class="muted" style="margin:.6em 0 0">Or, to survive OBS starting
-      before the dashboard, use <em>Local file</em> with this loader:</p>
-    <div class="row" style="margin-top:.4em">
       <input type="text" id="current-loader" readonly value="{{ current_loader }}"
              style="flex:1" onclick="this.select()">
       <button type="button" class="secondary copy-btn" data-copy="current-loader">Copy path</button>
+    </div>
+    <p class="muted" style="margin:.6em 0 0">Advanced: use this URL instead
+      (untick <em>Local file</em>) for per-source URL parameter overrides —
+      requires OBS to start after the dashboard.</p>
+    <div class="row" style="margin-top:.4em">
+      <input type="text" id="current-url" readonly value="{{ current_url }}"
+             style="flex:1" onclick="this.select()">
+      <button type="button" class="secondary copy-btn" data-copy="current-url">Copy URL</button>
     </div>
   </div>
 

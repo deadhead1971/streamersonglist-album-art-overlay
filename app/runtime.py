@@ -1,16 +1,18 @@
 """
-Background runtime service — the watcher loop running inside the dashboard
-process.
+Background runtime service — the live loop running inside the dashboard
+process. The dashboard is the only process needed during a stream.
 
-One thread polls the SSL queue every ``poll_interval`` seconds and:
-  1. caches the full queue list in memory (feeds the /overlay/queue.json
-     endpoint — the overlay never triggers extra API calls), and
-  2. when ``song_source`` is ``streamersonglist``, resolves artwork for the top
-     slot on change and writes ``current_artwork.png``, exactly as the
-     standalone watcher does (the resolve logic is imported from watcher.py).
+One thread ticks every ``poll_interval`` seconds and:
+  1. polls the SSL queue and caches it in memory (feeds the
+     /overlay/queue.json endpoint — the overlay never triggers extra API
+     calls), and
+  2. resolves artwork for the current song on change and writes
+     ``current_artwork.png``. The current song is the top queue slot, or —
+     when ``song_source`` is ``file`` — the contents of the configured song
+     file, read on the same tick.
 
-When ``song_source`` is ``file`` the service still polls the queue for the
-overlay but leaves the PNG to the standalone file watcher.
+In file mode a missing/unresolvable SSL username is not fatal: the queue
+overlay has nothing to show, but the PNG output still works.
 
 Library discipline: a fresh Library is created for each resolve (never held
 across polls) and every manifest write in the process goes through
@@ -24,7 +26,7 @@ import time
 
 import requests
 
-from . import songlist
+from . import artwork, songlist
 from .library import Library
 
 log = logging.getLogger("artwork_fetcher")
@@ -43,7 +45,6 @@ class RuntimeService:
         self._queue_at = 0.0      # monotonic time of last successful poll
         self._current = None      # (title, artist) at top of queue, or None
         self._error = None        # last poll error message, or None
-        self._writes_png = False
 
     # -- public API -----------------------------------------------------------
 
@@ -86,7 +87,6 @@ class RuntimeService:
             return {
                 "running": self._running,
                 "streamer": self._streamer_name,
-                "writes_png": self._writes_png,
                 "queue_length": len(self._queue),
                 "current_title": current[0] if current else None,
                 "current_artist": current[1] if current else None,
@@ -141,59 +141,74 @@ class RuntimeService:
         return streamer.get("id")
 
     def _run(self, cfg: dict):
-        # Imported here to avoid a circular import at module load
-        # (watcher imports artwork which is also used by dashboard).
-        from . import watcher
-
-        writes_png = cfg.get("song_source", "streamersonglist") == "streamersonglist"
-        with self._lock:
-            self._writes_png = writes_png
-
+        file_mode = cfg.get("song_source", "streamersonglist") == "file"
         try:
             interval = max(2, int(cfg.get("poll_interval", 10)))
         except (TypeError, ValueError):
             interval = 10
 
         streamer_id = self._resolve_id(cfg)
-        if streamer_id is None:
+        if streamer_id is None and not file_mode:
             with self._lock:
                 self._running = False
             return
 
-        log.info("Runtime service polling SSL queue for %s every %ss "
-                 "(PNG output: %s)", self._streamer_name, interval,
-                 "on" if writes_png else "off — file mode")
+        if streamer_id is None:
+            log.info("Runtime service watching song file every %ss (no SSL "
+                     "username — queue overlay disabled)", interval)
+        else:
+            log.info("Runtime service polling SSL queue for %s every %ss "
+                     "(current song from %s)", self._streamer_name, interval,
+                     "song file" if file_mode else "queue top")
 
-        last = None
+        # Sentinel so the very first tick always writes the output image (even
+        # when the queue/file starts out empty → fallback).
+        last = object()
         first = True
         while not self._stop.wait(0 if first else interval):
             first = False
-            try:
-                queue = songlist.fetch_queue(streamer_id)
-            except requests.RequestException as e:
-                # Transient — keep the current frame and cached queue.
-                with self._lock:
-                    self._error = str(e)
-                log.warning("SSL queue fetch failed (%s) — retrying", e)
-                continue
 
-            result = songlist._queue_item_song(queue[0]) if queue else None
+            # Queue poll — feeds the overlay, and in queue mode the PNG too.
+            result = None
+            if streamer_id is not None:
+                try:
+                    queue = songlist.fetch_queue(streamer_id)
+                except requests.RequestException as e:
+                    # Transient — keep the current frame and cached queue.
+                    with self._lock:
+                        self._error = str(e)
+                    log.warning("SSL queue fetch failed (%s) — retrying", e)
+                    if not file_mode:
+                        continue
+                    queue = None
+                if queue is not None:
+                    result = songlist._queue_item_song(queue[0]) if queue else None
+                    with self._lock:
+                        self._queue = queue
+                        self._queue_at = time.monotonic()
+                        self._error = None
+
+            if file_mode:
+                result = artwork.read_song_file(cfg.get("song_file"), quiet=True)
+
             with self._lock:
-                self._queue = queue
-                self._queue_at = time.monotonic()
                 self._current = result
-                self._error = None
 
-            if writes_png and result != last:
+            if result != last:
                 last = result
                 if result is None:
-                    log.info("Queue empty — applying fallback")
-                    watcher.apply_fallback(cfg)
+                    if file_mode:
+                        log.info("Song file empty, missing, or unconfigured "
+                                 "(%s) — applying fallback",
+                                 cfg.get("song_file") or "no path set")
+                    else:
+                        log.info("Queue empty — applying fallback")
+                    artwork.apply_fallback(cfg)
                 else:
-                    log.info("Queue top changed — fetching artwork...")
+                    log.info("Current song changed — fetching artwork...")
                     # Fresh Library per resolve so this thread never holds a
                     # stale manifest across dashboard edits.
-                    watcher.resolve_artwork_for_song(cfg, Library(), *result)
+                    artwork.resolve_artwork_for_song(cfg, Library(), *result)
 
         with self._lock:
             self._running = False

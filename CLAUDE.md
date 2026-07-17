@@ -4,18 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A tool for music streamers using StreamerSonglist. Two halves sharing one artwork library:
+A tool for music streamers using StreamerSonglist. One app — the **dashboard** (`python -m app.dashboard`, or `run_dashboard.bat`) — a local Flask app at `http://127.0.0.1:5050`. It syncs the songlist from the StreamerSonglist API, bulk-proposes artwork via iTunes Search, and provides a review UI to confirm/reject/upload images. On startup it also launches the **runtime service** (`app/runtime.py`): a background thread that resolves the current song (live SSL queue top, or a text file in `file` song-source mode), writes `current_artwork.png` for OBS, and feeds the **queue overlay** (`/overlay/queue`, an OBS browser source; configured at `/overlay`). The dashboard is the only process, offline and during a live stream. (A standalone headless watcher existed historically; it was folded into the runtime service in July 2026.)
 
-1. **Dashboard** (`python -m app.dashboard`, or `run_dashboard.bat`) — local Flask app at `http://127.0.0.1:5050`. Syncs the songlist from the StreamerSonglist API, bulk-proposes artwork via iTunes Search, and provides a review UI to confirm/reject/upload images. On startup it also launches the **runtime service** (`app/runtime.py`): a background thread that polls the live SSL queue, writes `current_artwork.png` for OBS, and feeds the **queue overlay** (`/overlay/queue`, an OBS browser source; configured at `/overlay`). The dashboard is therefore the one process needed during a live stream.
-2. **Watcher** (`python -m app.watcher`, or `run_watcher.bat` / `fetch_once.bat`) — standalone headless runtime for PNG-only use without the dashboard (or for the `file` song source). Same lookup logic; no overlay.
-
-`PLAN.md` is the original build plan — the authoritative record of design decisions (API facts, rate limits, validation rules). `README.md` is user-facing.
+`PLAN.md` is the original build plan — the authoritative record of design decisions (API facts, rate limits, validation rules), though its watcher/file layout is superseded. `README.md` is user-facing.
 
 ## Commands
 
-- Install: `pip install -r requirements.txt` (Flask, requests, Pillow, watchdog)
+- Install: `pip install -r requirements.txt` (Flask, requests, Pillow)
 - Run dashboard: `python -m app.dashboard`
-- Run watcher: `python -m app.watcher` (add `--once` behaviour via `fetch_once.bat`)
 - No tests or linter are configured. Verify by running the app; logs go to `artwork_fetcher.log`.
 
 Windows environment (PowerShell 5.1); paths contain spaces — quote everything in `.bat` files.
@@ -28,16 +24,15 @@ Modules in `app/`:
 - `songlist.py` — StreamerSonglist API client (public, no auth): resolve username → streamer id, fetch songs, poll live queue.
 - `sources.py` — artwork search cascade: iTunes (primary) → Last.fm (only if user supplies a key — never hardcode one) → MusicBrainz/Cover Art Archive (release-group level, 1 req/sec, descriptive User-Agent). Every result passes artist fuzzy-match (~0.6) and a compilation/karaoke blocklist that deprioritises (not rejects).
 - `library.py` — the artwork library: `library/manifest.json` + full-resolution PNGs named `Artist - Title.png`. Statuses: `proposed` / `confirmed` / `unverified` (grabbed live, needs review) / `rejected_all`. The manifest tolerates manually deleted image files (entry reverts to needing art).
-- `artwork.py` — shared propose/fetch logic used by both dashboard and watcher.
+- `artwork.py` — shared artwork logic used by both the runtime service and dashboard request handlers: propose/reject-cycle/upload, plus `resolve_artwork_for_song` (the live lookup order: skip_artists → fallback; library confirmed, else proposed/unverified; live cascade, result saved as `unverified` for post-stream review; fallback + `rejected_all` stub), `apply_fallback`, and `read_song_file`.
 - `imaging.py` — resize, reflection effect, and the **atomic PNG save with PermissionError retry** (OBS holds a read handle on the output file — keep this exactly as is).
-- `watcher.py` — runtime loop. Lookup order: skip_artists → fallback; library (confirmed, else proposed/unverified); live cascade (result saved as `unverified` for post-stream review); fallback + `rejected_all` stub.
-- `runtime.py` — the watcher loop as an in-process background service (started by the dashboard). One queue poll per interval feeds both the PNG output (reuses `watcher.resolve_artwork_for_song`) and the cached queue behind `/overlay/queue.json`. Creates a fresh `Library` per resolve; all manifest I/O is serialised via `library.MANIFEST_LOCK`. In `file` song-source mode it polls the queue for the overlay but leaves the PNG to the standalone watcher.
+- `runtime.py` — in-process background service (started by the dashboard). One tick per interval polls the queue (feeds the cached queue behind `/overlay/queue.json`) and resolves the current song — queue top, or the song file in `file` mode — to the PNG output via `artwork.resolve_artwork_for_song`. Creates a fresh `Library` per resolve; all manifest I/O is serialised via `library.MANIFEST_LOCK`. In `file` mode it runs even without an SSL username (PNG only, empty overlay).
 - `dashboard.py` — Flask routes; templates in `app/templates/`, CSS in `app/static/`. Overlay routes: `/overlay` (settings + OBS URL), `/overlay/queue` (transparent browser-source page; style presets, config-driven with query-param overrides), `/overlay/queue.json` (data; never triggers artwork fetches — library hit or fallback only).
 
 ### Key joints
 
-- `library.normalize_key(title, artist)` is the shared normalisation (lowercase, strip diacritics/punctuation/`(live)` suffixes) used by **both** dashboard and watcher — it's what makes library lookups hit. Search terms are stripped of suffixes, but library/cache keys use the original title.
-- Images are stored at source resolution; resize + reflection happen at output time in the watcher, so config changes never require re-fetching.
+- `library.normalize_key(title, artist)` is the shared normalisation (lowercase, strip diacritics/punctuation/`(live)` suffixes) used by **both** dashboard and runtime — it's what makes library lookups hit. Search terms are stripped of suffixes, but library/cache keys use the original title.
+- Images are stored at source resolution; resize + reflection happen at output time, so config changes never require re-fetching.
 - Bulk propose is throttled (~3s/call, iTunes limit ~20/min), runs in a background thread with a polled progress endpoint, and is resumable — never block a request handler on it.
 - Flask binds `127.0.0.1` only. Dashboard port is **5050**.
 

@@ -4,18 +4,17 @@ An OBS overlay for music streamers: album art for the current song, plus a song
 queue overlay, fed live from your StreamerSonglist queue — automatically.
 
 This tool is for music streamers who use [StreamerSonglist](https://www.streamersonglist.com).
-It has two halves:
+One app — the **dashboard** — does two jobs:
 
-- **Dashboard** — a small web app you run on your own PC (offline, not during a
-  stream). It pulls your songlist from StreamerSonglist, finds album artwork for
-  every song, and lets you confirm, reject, or upload your own image for each one.
-  The images you approve become your **artwork library**.
-- **Watcher** — runs during your stream. By default it polls your
-  StreamerSonglist queue and treats the song at the top as the current one,
-  writing an image file that OBS displays. (It can also watch a text file
-  instead, if you drive your current song some other way.) It uses your approved
-  library first; if a song isn't in the library yet, it grabs a best guess live
-  and flags it so you can review it after the stream.
+- **Between streams** it pulls your songlist from StreamerSonglist, finds album
+  artwork for every song, and lets you confirm, reject, or upload your own image
+  for each one. The images you approve become your **artwork library**.
+- **During your stream** its built-in live service polls your StreamerSonglist
+  queue, treats the song at the top as the current one, writes an artwork image
+  file for OBS, and serves the queue and now-playing overlays. (It can also read
+  a text file instead, if you drive your current song some other way.) It uses
+  your approved library first; if a song isn't in the library yet, it grabs a
+  best guess live and flags it so you can review it after the stream.
 
 Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
 (if you add your own key) and **MusicBrainz / Cover Art Archive**.
@@ -26,14 +25,14 @@ Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
 
 - **Windows** (built and tested there; the file-saving is tuned for OBS on
   Windows). **macOS/Linux should work but are untested** — it's plain Python.
-  The `.bat` launchers are Windows-only, so start things from a terminal
-  instead: `python3 -m app.dashboard` (dashboard) or `python3 -m app.watcher`
-  (watcher). If you try it, let me know how it goes via an issue!
+  The `.bat` launcher is Windows-only, so start it from a terminal instead:
+  `python3 -m app.dashboard`. If you try it, let me know how it goes via an
+  issue!
 - **Python 3.10 or newer**. Get it from [python.org](https://www.python.org/downloads/).
   During install, tick **"Add Python to PATH"**.
 - A **StreamerSonglist** account with some songs in your list. During a stream,
-  keep the song you're playing at the **top of your SSL queue** — that's all the
-  watcher needs. (Alternatively, point it at a text file your own setup writes.)
+  keep the song you're playing at the **top of your SSL queue** — that's all it
+  needs. (Alternatively, point it at a text file your own setup writes.)
 
 ## 2. Install
 
@@ -54,8 +53,9 @@ Double-click **`run_dashboard.bat`** (or run `python -m app.dashboard`).
     `https://www.streamersonglist.com/t/yourname/songs`. Click **Test connection**
     to check it works and see your song count.
   - **Current song source** — leave on **StreamerSonglist queue** (recommended);
-    the watcher reads the top of your live queue. Only switch to **Text file** if
-    another tool writes your current song to a file, and set its path below.
+    the live service reads the top of your live queue. Only switch to **Text
+    file** if another tool writes your current song to a file, and set its path
+    below.
   - **Output image** — where the artwork PNG should be written (point OBS at this).
   - **Fallback image** — shown for your own originals and for songs with no art.
   - **Skip artists** — your own artist name(s), comma separated. Songs by these
@@ -89,12 +89,9 @@ seconds and, whenever the song at the top changes, writes the artwork image for
 OBS. Keep the song you're playing at the top of your queue and the artwork
 follows automatically. When your queue is empty, the fallback image is shown.
 The header shows a status indicator (current song and queue length) so you can
-sanity-check it before going live.
-
-Prefer not to have the dashboard open? The standalone watcher
-(**`run_watcher.bat`**) does the same PNG job headlessly — but the queue
-overlay below needs the dashboard. (With the **Text file** source the live
-service handles the overlay while the standalone watcher watches your file.)
+sanity-check it before going live. (With the **Text file** source the live
+service reads your song file instead of the queue — everything else works the
+same.)
 
 ### The queue overlay
 
@@ -113,10 +110,7 @@ Lookup order for each song:
    *unverified* so you can check it later.
 3. The **fallback image** if nothing is found.
 
-Prefer to trigger per-song instead of running a watch loop? Use
-**`fetch_once.bat`**, which does a single fetch and exits.
-
-After a stream, open the dashboard's **Queue** page to review anything the watcher
+After a stream, open the dashboard's **Queue** page to review anything that was
 grabbed live and confirm or replace it.
 
 ## 6. Your artwork library
@@ -132,9 +126,7 @@ tool notices it's gone and treats that song as needing art again.
 
 | File | What it does |
 |------|--------------|
-| `run_dashboard.bat` | Start the dashboard web app (offline tool). |
-| `run_watcher.bat` | Start the runtime watcher (during streams). |
-| `fetch_once.bat` | Fetch artwork for the current song once, then exit. |
+| `run_dashboard.bat` | Start the dashboard (also run this during streams). |
 | `config.example.json` | Template copied to `config.json` on first run. |
 | `app/` | The application code. |
 

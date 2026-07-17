@@ -23,7 +23,7 @@ from PIL import Image
 
 from . import artwork, config, runtime, songlist
 from .library import (
-    Library, STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_UNVERIFIED,
+    Library, STATUS_PROPOSED, STATUS_UNVERIFIED,
     normalize_key,
 )
 
@@ -292,7 +292,7 @@ def save_settings():
 
     config.save_config(cfg)
     # Pick up the new username/source/interval without an app restart.
-    if cfg.get("runtime_service", True) and cfg.get("streamersonglist_username"):
+    if _runtime_wanted(cfg):
         runtime.service.restart(cfg)
     else:
         runtime.service.stop()
@@ -541,9 +541,9 @@ def api_runtime_status():
     return jsonify(runtime.service.status())
 
 
-# Statuses whose stored image the overlay will show (mirrors the watcher's
-# USABLE_STATUSES — rejected_all means the user turned everything down).
-_OVERLAY_STATUSES = (STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_UNVERIFIED)
+# Statuses whose stored image the overlay will show (rejected_all means the
+# user turned everything down).
+_OVERLAY_STATUSES = artwork.USABLE_STATUSES
 
 _OVERLAY_PRESETS = ("dark", "light", "minimal", "glass")
 _OVERLAY_ANIMATIONS = ("slide", "fade", "none")
@@ -777,10 +777,23 @@ def save_overlay_current_settings():
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _runtime_wanted(cfg: dict) -> bool:
+    """
+    Whether the runtime service should run: enabled, and there's a song source
+    to drive it (a username for queue mode; file mode works without one — the
+    overlay just stays empty).
+    """
+    if not cfg.get("runtime_service", True):
+        return False
+    return bool(cfg.get("streamersonglist_username")) or \
+        cfg.get("song_source", "streamersonglist") == "file"
+
+
 def run(host="127.0.0.1", port=5050, open_browser=True):
+    artwork.setup_logging()
     first_run = config.ensure_config()
     cfg = config.load_config()
-    if cfg.get("runtime_service", True) and cfg.get("streamersonglist_username"):
+    if _runtime_wanted(cfg):
         runtime.service.start(cfg)
     if open_browser:
         target = "settings" if first_run else ""

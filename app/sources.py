@@ -355,7 +355,7 @@ def search_cascade(artist: str, title: str, cfg: dict,
     """
     Lazily yield candidates across all configured sources in order:
     iTunes -> Last.fm (if key) -> MusicBrainz. This is a generator on purpose:
-    the watcher consumes it until the first candidate downloads, so when iTunes
+    the runtime consumes it until the first candidate downloads, so when iTunes
     wins we never pay for the ~1s/req MusicBrainz call. The dashboard reject-cycle
     uses it the same way when iTunes candidates run out.
     """
