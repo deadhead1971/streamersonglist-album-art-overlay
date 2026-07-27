@@ -19,6 +19,8 @@ One app — the **dashboard** — does two jobs:
 Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
 (if you add your own key) and **MusicBrainz / Cover Art Archive**.
 
+[![Watch the install & setup walkthrough on YouTube](docs/screenshots/install-video-thumbnail.png)](https://www.youtube.com/watch?v=1lnzu5O0h8Q)
+
 ![The Songs page: your songlist with confirmed artwork](docs/screenshots/songlist-artwork.png)
 
 ---
