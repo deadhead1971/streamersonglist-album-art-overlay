@@ -7,9 +7,10 @@ One thread ticks every ``poll_interval`` seconds and:
      /overlay/queue.json endpoint — the overlay never triggers extra API
      calls), and
   2. resolves artwork for the current song on change and writes
-     ``current_artwork.png``. The current song is the top queue slot, or —
-     when ``song_source`` is ``file`` — the contents of the configured song
-     file, read on the same tick.
+     ``current_artwork.png``. The current song is the queue's now-playing
+     slot (falling back to the top of the upcoming queue when that slot is
+     empty), or — when ``song_source`` is ``file`` — the contents of the
+     configured song file, read on the same tick.
 
 In file mode a missing/unresolvable SSL username is not fatal: the queue
 overlay has nothing to show, but the PNG output still works.
@@ -41,9 +42,11 @@ class RuntimeService:
         self._running = False
         self._streamer_id = None
         self._streamer_name = None
-        self._queue = []          # raw SSL queue items, top-first
+        self._streamer_avatar = None
+        self._playing = None      # raw now-playing item, or None
+        self._queue = []          # raw UPCOMING queue items, top-first
         self._queue_at = 0.0      # monotonic time of last successful poll
-        self._current = None      # (title, artist) at top of queue, or None
+        self._current = None      # (title, artist) playing right now, or None
         self._error = None        # last poll error message, or None
 
     # -- public API -----------------------------------------------------------
@@ -87,7 +90,10 @@ class RuntimeService:
             return {
                 "running": self._running,
                 "streamer": self._streamer_name,
-                "queue_length": len(self._queue),
+                "avatar": self._streamer_avatar,
+                # The now-playing slot is counted separately: v2's queue
+                # `total` covers upcoming songs only.
+                "queue_length": len(self._queue) + (1 if self._playing else 0),
                 "current_title": current[0] if current else None,
                 "current_artist": current[1] if current else None,
                 "error": self._error,
@@ -95,32 +101,33 @@ class RuntimeService:
                               if self._queue_at else None,
             }
 
-    def get_queue(self, cfg: dict, max_age: float = 15.0) -> list:
+    def get_queue(self, cfg: dict, max_age: float = 15.0):
         """
-        Return the cached queue if fresh enough; otherwise (service stopped, or
-        cache stale) fetch it inline. Never raises — returns the last known
-        queue on failure.
+        Return ``(playing, upcoming)`` from cache if fresh enough; otherwise
+        (service stopped, or cache stale) fetch it inline. Never raises —
+        returns the last known queue on failure.
         """
         with self._lock:
             fresh = self._queue_at and (time.monotonic() - self._queue_at) < max_age
             if fresh:
-                return list(self._queue)
+                return self._playing, list(self._queue)
             streamer_id = self._streamer_id
 
         if streamer_id is None:
             streamer_id = self._resolve_id(cfg)
             if streamer_id is None:
-                return []
+                return None, []
         try:
-            queue = songlist.fetch_queue(streamer_id)
+            playing, upcoming = songlist.fetch_queue(streamer_id, cfg=cfg)
         except requests.RequestException as e:
             log.warning("Overlay queue fetch failed: %s", e)
             with self._lock:
-                return list(self._queue)
+                return self._playing, list(self._queue)
         with self._lock:
-            self._queue = queue
+            self._playing = playing
+            self._queue = upcoming
             self._queue_at = time.monotonic()
-            return list(queue)
+            return playing, list(upcoming)
 
     # -- internals ------------------------------------------------------------
 
@@ -129,7 +136,13 @@ class RuntimeService:
         if not username:
             return None
         try:
-            streamer = songlist.resolve_streamer(username)
+            streamer = songlist.resolve_streamer(username, cfg=cfg)
+        except songlist.AuthRequired as e:
+            # Cutover day: say what to do rather than logging a bare 401.
+            with self._lock:
+                self._error = str(e)
+            log.error("Runtime service: %s", self._error)
+            return None
         except requests.RequestException as e:
             with self._lock:
                 self._error = f"Could not resolve username: {e}"
@@ -138,6 +151,7 @@ class RuntimeService:
         with self._lock:
             self._streamer_id = streamer.get("id")
             self._streamer_name = streamer.get("name")
+            self._streamer_avatar = streamer.get("avatar")
         return streamer.get("id")
 
     def _run(self, cfg: dict):
@@ -159,32 +173,50 @@ class RuntimeService:
         else:
             log.info("Runtime service polling SSL queue for %s every %ss "
                      "(current song from %s)", self._streamer_name, interval,
-                     "song file" if file_mode else "queue top")
+                     "song file" if file_mode else "now-playing slot")
 
         # Sentinel so the very first tick always writes the output image (even
         # when the queue/file starts out empty → fallback).
         last = object()
         first = True
-        while not self._stop.wait(0 if first else interval):
+        backoff = 0.0  # extra seconds added after a 429
+        while not self._stop.wait(0 if first else interval + backoff):
             first = False
 
             # Queue poll — feeds the overlay, and in queue mode the PNG too.
             result = None
             if streamer_id is not None:
+                playing, upcoming, ok = None, [], False
                 try:
-                    queue = songlist.fetch_queue(streamer_id)
+                    playing, upcoming = songlist.fetch_queue(streamer_id, cfg=cfg)
+                    ok = True
+                except songlist.RateLimited as e:
+                    # No published limits for v2 — back off instead of hammering.
+                    backoff = min(max(backoff * 2, interval), 300)
+                    with self._lock:
+                        self._error = str(e)
+                    log.warning("SSL rate limited (%s) — next poll in %.0fs",
+                                e, interval + backoff)
+                except songlist.AuthRequired as e:
+                    with self._lock:
+                        self._error = str(e)
+                    log.error("SSL queue fetch rejected: %s", e)
                 except requests.RequestException as e:
                     # Transient — keep the current frame and cached queue.
                     with self._lock:
                         self._error = str(e)
                     log.warning("SSL queue fetch failed (%s) — retrying", e)
-                    if not file_mode:
-                        continue
-                    queue = None
-                if queue is not None:
-                    result = songlist._queue_item_song(queue[0]) if queue else None
+
+                if not ok and not file_mode:
+                    continue
+                if ok:
+                    backoff = 0.0
+                    # The now-playing slot is the current song; the top of the
+                    # upcoming queue is only a fallback for when it's empty.
+                    result = songlist.current_from_queue(playing, upcoming)
                     with self._lock:
-                        self._queue = queue
+                        self._playing = playing
+                        self._queue = upcoming
                         self._queue_at = time.monotonic()
                         self._error = None
 

@@ -24,8 +24,38 @@
                value="{{ cfg.streamersonglist_username }}"
                placeholder="alanthompson_music or https://www.streamersonglist.com/t/…/songs">
       </label>
+
+      <label>API token
+        <input type="password" name="api_token" autocomplete="off" spellcheck="false"
+               value="{{ token_mask if token_set }}"
+               placeholder="Paste your token from your SSL profile → API Access">
+      </label>
+      <div class="muted small">
+        StreamerSonglist's new API requires a token. Create one at
+        <a href="https://www.streamersonglist.com/profile" target="_blank" rel="noopener">your
+        SSL profile → API Access</a>. Stored locally in <code>config.json</code> and
+        sent only to StreamerSonglist — it is never committed or shared.
+        {% if token_set %}A token is saved; leave the field as-is to keep it.{% else %}
+        You don't need one until StreamerSonglist switches over — the app detects
+        which API is live and tells you when it's needed.{% endif %}
+      </div>
+      {% if token_set %}
+      <label class="checkbox">
+        <input type="checkbox" name="api_token_clear"> Remove the saved token
+      </label>
+      {% endif %}
+
+      <label>Platform
+        <select name="platform">
+          {% for p in platforms %}
+          <option value="{{ p }}" {{ 'selected' if cfg.platform == p }}>{{ p }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
       <div class="row">
         <button type="button" id="test-btn" class="secondary">Test connection</button>
+        <img id="test-avatar" class="avatar" hidden alt="">
         <span id="test-result" class="muted"></span>
       </div>
     </fieldset>
@@ -146,16 +176,30 @@ document.querySelectorAll('.browse-btn').forEach(btn => {
 
 document.getElementById('test-btn').addEventListener('click', async () => {
   const el = document.getElementById('test-result');
+  const avatar = document.getElementById('test-avatar');
   const username = document.querySelector('[name=streamersonglist_username]').value;
+  const platform = document.querySelector('[name=platform]').value;
+  // Only send a token the user actually typed — the mask means "keep the saved one".
+  const typed = document.querySelector('[name=api_token]').value;
+  const token = typed.startsWith('{{ token_mask }}') ? '' : typed;
   el.textContent = 'Testing…';
+  avatar.hidden = true;
   try {
     const r = await fetch('{{ url_for("api_test_connection") }}', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({username})
+      body: JSON.stringify({username, token, platform})
     });
     const d = await r.json();
-    if (d.ok) { el.textContent = `✅ ${d.name} (id ${d.id}) — ${d.song_count} songs`; el.className = 'ok'; }
-    else { el.textContent = `❌ ${d.error}`; el.className = 'err'; }
+    if (d.ok) {
+      el.textContent = `✅ ${d.name} (id ${d.id}) — ${d.song_count} songs`;
+      el.className = 'ok';
+      if (d.avatar) {
+        // A dead CDN URL degrades to no image rather than a broken-image icon.
+        avatar.onerror = () => { avatar.hidden = true; };
+        avatar.src = d.avatar;
+        avatar.hidden = false;
+      }
+    } else { el.textContent = `❌ ${d.error}`; el.className = 'err'; }
   } catch (e) { el.textContent = '❌ ' + e; el.className = 'err'; }
 });
 </script>

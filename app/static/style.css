@@ -35,6 +35,16 @@ h1 { margin: 0 0 16px; font-size: 22px; }
 .filters { margin: 16px 0; flex-wrap: wrap; }
 .muted { color: var(--muted); }
 .big { font-size: 18px; }
+.small { font-size: 13px; line-height: 1.5; }
+
+/* Channel avatar from the SSL API (150x150 source), beside the songlist
+   heading and the settings test-connection result. */
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  object-fit: cover; border: 1px solid var(--line); flex: none;
+}
+h1.with-avatar { display: flex; align-items: center; gap: 10px; }
+h1.with-avatar .avatar { width: 32px; height: 32px; }
 
 button, .upload {
   font: inherit; cursor: pointer; border: 1px solid var(--line);

@@ -1,5 +1,9 @@
 {
   "streamersonglist_username": "",
+  "api_base": "",
+  "api_token": "",
+  "api_token_type": "User",
+  "platform": "twitch",
   "song_source": "streamersonglist",
   "poll_interval": 10,
   "song_file": "",

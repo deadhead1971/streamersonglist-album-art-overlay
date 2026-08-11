@@ -4,7 +4,9 @@
 {% block content %}
 <div class="panel">
   <div class="row spread">
-    <h1>{% if cfg.streamersonglist_username %}{{ cfg.streamersonglist_username }}'s {% endif %}Songlist</h1>
+    <h1 class="with-avatar">
+      <img id="channel-avatar" class="avatar" hidden alt="">
+      {% if cfg.streamersonglist_username %}{{ cfg.streamersonglist_username }}'s {% endif %}Songlist</h1>
     <div class="row">
       <button id="sync-btn" class="secondary">Sync songlist</button>
       <button id="propose-btn" class="primary">Find artwork</button>
@@ -30,6 +32,20 @@
 const statusEl = document.getElementById('status');
 const rowsEl = document.getElementById('rows');
 let allRows = [];
+
+// Channel avatar, if the live service has resolved one (v2 API only). Fetched
+// from the status endpoint rather than rendered server-side so the page never
+// waits on a network call; a dead CDN URL degrades to the text-only heading.
+(async () => {
+  try {
+    const d = await (await fetch('/api/runtime/status')).json();
+    if (!d.avatar) return;
+    const img = document.getElementById('channel-avatar');
+    img.onerror = () => { img.hidden = true; };
+    img.src = d.avatar;
+    img.hidden = false;
+  } catch (e) { /* no avatar — leave the heading as text */ }
+})();
 
 const STATUS_LABEL = {
   confirmed: '✅ confirmed', proposed: '🟡 proposed',

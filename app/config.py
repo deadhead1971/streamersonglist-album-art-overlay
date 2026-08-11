@@ -32,6 +32,18 @@ USER_AGENT = (
 
 DEFAULT_CONFIG = {
     "streamersonglist_username": "",
+    # StreamerSonglist API. v1 (today's production) needs no credentials; the
+    # v2 rewrite requires auth on every read. The client detects which is live
+    # and only sends the token when one is set, so these can stay blank until
+    # SSL flips.
+    #   api_base       blank = production; set to the staging host to test
+    #   api_token      the SSL access token — NEVER commit this
+    #   api_token_type "User" (profile → API Access) or "Streamer"
+    #   platform       twitch | youtube | kick | none
+    "api_base": "",
+    "api_token": "",
+    "api_token_type": "User",
+    "platform": "twitch",
     # Where the runtime service gets the current song:
     #   "streamersonglist" (default) — poll the live queue, top slot = now playing
     #   "file"                        — read a text file another tool writes
