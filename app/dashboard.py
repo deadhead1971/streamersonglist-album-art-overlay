@@ -287,6 +287,7 @@ def save_settings():
     except (ValueError, TypeError):
         cfg["poll_interval"] = 10
     cfg["runtime_service"] = form.get("runtime_service") == "on"
+    cfg["websocket_events"] = form.get("websocket_events") == "on"
     cfg["song_file"] = form.get("song_file", "").strip()
     cfg["output_image"] = form.get("output_image", "").strip()
     cfg["fallback_image"] = form.get("fallback_image", "").strip()
