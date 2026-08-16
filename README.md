@@ -10,8 +10,8 @@ One app — the **dashboard** — does two jobs:
   artwork for every song, and lets you confirm, reject, or upload your own image
   for each one. The images you approve become your **artwork library**.
 - **During your stream** its built-in live service polls your StreamerSonglist
-  queue, treats the song at the top as the current one, writes an artwork image
-  file for OBS, and serves the queue and now-playing overlays. (It can also read
+  queue, takes whatever is in your now-playing slot as the current song, writes
+  an artwork image file for OBS, and serves the queue and now-playing overlays. (It can also read
   a text file instead, if you drive your current song some other way.) It uses
   your approved library first; if a song isn't in the library yet, it grabs a
   best guess live and flags it so you can review it after the stream.
@@ -35,8 +35,12 @@ Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
 - **Python 3.10 or newer**. Get it from [python.org](https://www.python.org/downloads/).
   During install, tick **"Add Python to PATH"**.
 - A **StreamerSonglist** account with some songs in your list. During a stream,
-  keep the song you're playing at the **top of your SSL queue** — that's all it
-  needs. (Alternatively, point it at a text file your own setup writes.)
+  keep the song you're playing in your SSL **now-playing** slot (or at the top of
+  the queue — SSL promotes it for you). (Alternatively, point it at a text file
+  your own setup writes.)
+- A **StreamerSonglist API token**. StreamerSonglist's API now requires one for
+  every request, so the app can't read your songlist or queue without it. It's
+  free and takes a moment to create — see the next step.
 
 ## 2. Install
 
@@ -46,7 +50,23 @@ Download/clone this repository, open a terminal in the folder, and run:
 pip install -r requirements.txt
 ```
 
-## 3. First run — the dashboard
+## 3. Get your StreamerSonglist API token
+
+StreamerSonglist's API requires a token for every request, so you need one before
+the app can see your songlist.
+
+1. Sign in at [streamersonglist.com](https://www.streamersonglist.com) and open
+   your **profile**.
+2. Find **API Access** and create a **user access token**.
+3. Copy it — you'll paste it into the app's Settings page in the next step.
+
+Keep it private. It's stored only in your local `config.json` (which is never
+committed to git) and sent only to StreamerSonglist. Treat it like a password:
+it can read *and* write every channel your account administrates, so don't paste
+it into screenshots, streams, or bug reports. If it ever leaks, create a new one
+from the same page.
+
+## 4. First run — the dashboard
 
 Double-click **`run_dashboard.bat`** (or run `python -m app.dashboard`).
 
@@ -54,8 +74,12 @@ Double-click **`run_dashboard.bat`** (or run `python -m app.dashboard`).
   **Settings** page in your browser at `http://127.0.0.1:5050`.
 - Fill in:
   - **Username or songlist URL** — e.g. `yourname` or
-    `https://www.streamersonglist.com/t/yourname/songs`. Click **Test connection**
-    to check it works and see your song count.
+    `https://www.streamersonglist.com/t/yourname/songs`.
+  - **API token** — paste the token from step 3. Then click **Test connection**:
+    it should show your channel name, avatar and song count. (Once saved, the
+    field shows dots instead of the token; leaving it untouched keeps the saved
+    one, and there's a tickbox to remove it.)
+  - **Platform** — `twitch` unless your SSL channel is on YouTube or Kick.
   - **Current song source** — leave on **StreamerSonglist queue** (recommended);
     the live service reads the top of your live queue. Only switch to **Text
     file** if another tool writes your current song to a file, and set its path
@@ -67,7 +91,7 @@ Double-click **`run_dashboard.bat`** (or run `python -m app.dashboard`).
   - (Optional) **iTunes country**, **Last.fm API key**, reflection/size settings.
 - Click **Save settings**.
 
-## 4. Build your artwork library
+## 5. Build your artwork library
 
 On the **Songs** page:
 
@@ -87,13 +111,15 @@ The keyboard shortcuts make reviewing a long list fast.
 
 ![The Review page: proposed artwork with alternative candidates](docs/screenshots/review-artwork.png)
 
-## 5. During your stream
+## 6. During your stream
 
 Keep the **dashboard** (`run_dashboard.bat`) running while you're live. It runs
 a built-in live service that polls your StreamerSonglist queue every few
-seconds and, whenever the song at the top changes, writes the artwork image for
-OBS. Keep the song you're playing at the top of your queue and the artwork
-follows automatically. When your queue is empty, the fallback image is shown.
+seconds and, whenever the now-playing song changes, writes the artwork image for
+OBS. Play through your queue as usual and the artwork follows automatically —
+StreamerSonglist promotes the top of your queue into the now-playing slot, and
+if that slot is empty the app falls back to the top of the queue. When your
+queue is empty entirely, the fallback image is shown.
 The header shows a status indicator (current song and queue length) so you can
 sanity-check it before going live. (With the **Text file** source the live
 service reads your song file instead of the queue — everything else works the
@@ -121,7 +147,7 @@ Lookup order for each song:
 After a stream, open the dashboard's **Queue** page to review anything that was
 grabbed live and confirm or replace it.
 
-## 6. Your artwork library
+## 7. Your artwork library
 
 Images live in the `library/` folder, named `Artist - Title.png`, at full
 resolution. Resizing and the reflection effect happen when the image is written for
@@ -137,16 +163,23 @@ tool notices it's gone and treats that song as needing art again.
 | `run_dashboard.bat` | Start the dashboard (also run this during streams). |
 | `config.example.json` | Template copied to `config.json` on first run. |
 | `app/` | The application code. |
+| `tools/probe_api.py` | Diagnostic: checks which StreamerSonglist API is answering and whether your token works. |
 
-`config.json`, your `library/`, and logs are **not** committed to git — they're
-yours and local.
+`config.json` (which holds your API token), your `library/`, and logs are **not**
+committed to git — they're yours and local.
 
 ## Troubleshooting
 
 - **`python` not found** — reinstall Python with "Add Python to PATH" ticked, or
   reopen your terminal.
-- **Test connection fails** — check the username/URL; you can also paste your full
-  songlist URL.
+- **Test connection fails** — most often a missing or mistyped **API token**
+  (step 3); the app will say so if that's the cause. Otherwise check the
+  username/URL — you can also paste your full songlist URL.
+- **"StreamerSonglist has upgraded its API and now requires a token"** — exactly
+  what it says: create a token (step 3) and paste it into Settings.
+- **Which API am I talking to?** — run `python -m tools.probe_api` for a quick
+  read-out of the API host, the detected version, your channel and queue. It
+  never prints your token.
 - **No artwork for a song** — use **Reject → next** to try other sources, or
   **Upload** your own image.
 - **Last.fm is skipped** — that's expected unless you add your own free API key in
