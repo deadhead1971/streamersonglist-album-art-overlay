@@ -38,6 +38,12 @@ SONGLIST_SNAPSHOT = config.LIBRARY_DIR / "songlist.json"
 # iTunes rate limit is ~20/min; throttle the bulk run to ~3s/call.
 PROPOSE_DELAY = 3.0
 
+# Platforms the StreamerSonglist API accepts for username resolution.
+_PLATFORMS = ("twitch", "youtube", "kick", "none")
+
+# Placeholder shown in place of a stored API token — never the token itself.
+TOKEN_MASK = "•" * 12
+
 
 # ---------------------------------------------------------------------------
 # Songlist sync
@@ -250,6 +256,9 @@ def index():
 def settings_page():
     cfg = config.load_config()
     return render_template("settings.html", cfg=cfg,
+                           platforms=_PLATFORMS,
+                           token_set=bool((cfg.get("api_token") or "").strip()),
+                           token_mask=TOKEN_MASK,
                            needs_setup=not cfg.get("streamersonglist_username"))
 
 
@@ -261,6 +270,16 @@ def save_settings():
     cfg["streamersonglist_username"] = songlist.extract_username(
         form.get("streamersonglist_username", "").strip()
     )
+    # API token: the field renders masked, so a blank submit means "leave it
+    # alone" rather than "clear it" — otherwise every settings save would wipe
+    # the credential. Clearing is explicit.
+    token = form.get("api_token", "").strip()
+    if form.get("api_token_clear") == "on":
+        cfg["api_token"] = ""
+    elif token and not token.startswith("•"):
+        cfg["api_token"] = token
+    platform = form.get("platform", "twitch").strip().lower()
+    cfg["platform"] = platform if platform in _PLATFORMS else "twitch"
     source = form.get("song_source", "streamersonglist").strip()
     cfg["song_source"] = source if source in ("streamersonglist", "file") else "streamersonglist"
     try:
@@ -291,6 +310,8 @@ def save_settings():
             pass
 
     config.save_config(cfg)
+    # Host/token/platform may have changed — re-probe which API is live.
+    songlist.reset_backend()
     # Pick up the new username/source/interval without an app restart.
     if _runtime_wanted(cfg):
         runtime.service.restart(cfg)
@@ -373,14 +394,28 @@ def api_browse():
 
 @app.route("/api/test-connection", methods=["POST"])
 def api_test_connection():
-    username = (request.json or {}).get("username", "")
+    """
+    Test the API credentials/username as currently typed into the settings
+    form — the token doesn't have to be saved first, which is what makes this
+    usable for "did I paste it right?".
+    """
+    body = request.json or {}
+    cfg = config.load_config()
+    # Field values from the unsaved form win; a blank token falls back to the
+    # stored one (the form renders it masked, never in the page source).
+    if body.get("token"):
+        cfg["api_token"] = body["token"].strip()
+    if body.get("platform"):
+        cfg["platform"] = body["platform"].strip()
+
     try:
-        streamer = songlist.resolve_streamer(username)
+        streamer = songlist.resolve_streamer(body.get("username", ""), cfg=cfg)
         sid = streamer.get("id")
-        first = songlist.fetch_songs_page(sid, size=1, current=0)
         return jsonify({"ok": True, "id": sid,
                         "name": streamer.get("name"),
-                        "song_count": first.get("total", 0)})
+                        "avatar": streamer.get("avatar"),
+                        "backend": streamer.get("backend"),
+                        "song_count": songlist.fetch_song_count(sid, cfg=cfg)})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
@@ -392,10 +427,21 @@ def api_sync():
     if not username:
         return jsonify({"ok": False, "error": "No username configured"}), 400
     try:
-        streamer = songlist.resolve_streamer(username)
-        songs = songlist.fetch_all_songs(streamer["id"])
+        streamer = songlist.resolve_streamer(username, cfg=cfg)
+        songs = songlist.fetch_all_songs(streamer["id"], cfg=cfg)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
+
+    # An empty songlist is never a legitimate sync: merge_songlist clears
+    # in_songlist on every entry before re-adding, so a 200 carrying zero songs
+    # (wrong streamer, or an API shim answering for an unknown channel) would
+    # silently flip the whole library out of the songlist.
+    if not songs:
+        return jsonify({
+            "ok": False,
+            "error": ("StreamerSonglist returned an empty songlist — refusing "
+                      "to sync. Check the username in Settings and try again."),
+        }), 400
 
     lib = Library()
     added = merge_songlist(lib, songs)
@@ -637,13 +683,19 @@ def overlay_queue_json():
     cfg = config.load_config()
     opts = overlay_options(cfg, request.args)
 
-    items = runtime.service.get_queue(cfg)
-    if not opts["include_current"]:
-        items = items[1:]
+    # `upcoming` excludes the now-playing song on both backends, so the
+    # now-playing card is prepended rather than the list being sliced.
+    playing, upcoming = runtime.service.get_queue(cfg)
+    items = list(upcoming)
+    if opts["include_current"] and playing is not None:
+        items.insert(0, playing)
     items = items[: opts["max_songs"]]
 
     lib = Library()
     rows = []
+    # Display numbering, not the API's: v2 numbers the now-playing song 0 and
+    # restarts the upcoming queue at 1. Excluding the current song still starts
+    # the list at 2, exactly as it reads today.
     for pos, item in enumerate(items, start=1 if opts["include_current"] else 2):
         view = songlist.queue_item_view(item, pos)
         if view is None:
@@ -679,8 +731,11 @@ def overlay_queue_page():
 def overlay_current_json():
     cfg = config.load_config()
     opts = overlay_current_options(cfg, request.args)
-    items = runtime.service.get_queue(cfg)
-    view = songlist.queue_item_view(items[0], 1) if items else None
+    playing, upcoming = runtime.service.get_queue(cfg)
+    # The now-playing slot, falling back to the head of the upcoming queue when
+    # nothing has been promoted into it.
+    item = playing if playing is not None else (upcoming[0] if upcoming else None)
+    view = songlist.queue_item_view(item, 1) if item is not None else None
     if view is not None:
         view["art"] = _resolve_art(Library(), view["title"], view["artist"])
     return jsonify({"item": view, "options": opts})
