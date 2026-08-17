@@ -9,6 +9,7 @@ request handlers never block on it.
 import io
 import json
 import logging
+import socket
 import subprocess
 import sys
 import threading
@@ -16,6 +17,7 @@ import time
 import webbrowser
 from pathlib import Path
 
+import requests
 from flask import (
     Flask, jsonify, redirect, render_template, request, send_file, url_for,
 )
@@ -845,8 +847,54 @@ def _runtime_wanted(cfg: dict) -> bool:
         cfg.get("song_source", "streamersonglist") == "file"
 
 
+def _port_owner(host: str, port: int):
+    """
+    What is already listening on ``host:port``: ``"dashboard"`` (another
+    instance of this app), ``"other"`` (some other server), or None (free).
+
+    Connecting is the only check that works here. A bind test is not enough on
+    Windows: Werkzeug sets SO_REUSEADDR, so a second dashboard binds an
+    already-bound port *successfully* and the two instances then share it — the
+    older one keeps answering with whatever code it started with while the new
+    one looks perfectly healthy, and since the log path comes from ``__file__``
+    they both write the same log. That cost a real debugging session on
+    2026-08-17, with a stale instance serving a fixed overlay's old output.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.5)
+        if probe.connect_ex((host, port)) != 0:
+            return None
+    try:
+        # Ours answers this with JSON; anything else identifies as "other".
+        resp = requests.get(f"http://{host}:{port}/api/runtime/status", timeout=2)
+        if resp.ok and "running" in resp.json():
+            return "dashboard"
+    except (requests.RequestException, ValueError):
+        pass
+    return "other"
+
+
 def run(host="127.0.0.1", port=5050, open_browser=True):
     artwork.setup_logging()
+
+    # Before the runtime service starts — a second service would poll SSL and
+    # fight the first one for the output PNG.
+    owner = _port_owner(host, port)
+    if owner is not None:
+        url = f"http://{host}:{port}/"
+        if owner == "dashboard":
+            message = (f"The dashboard is already running at {url}\n"
+                       f"Open that, or close the other window first if you "
+                       f"meant to restart it.")
+        else:
+            message = (f"Port {port} is already in use by another program, so "
+                       f"the dashboard can't start.")
+        message += (f"\nTo find what is holding the port:  "
+                    f"netstat -ano | findstr :{port}")
+        log.error("Refusing to start: %s", message.replace("\n", " "))
+        print(f"\n{message}\n")
+        raise SystemExit(1)
+
     first_run = config.ensure_config()
     cfg = config.load_config()
     if _runtime_wanted(cfg):

@@ -70,7 +70,12 @@ def main() -> int:
 
         playing, upcoming = songlist.fetch_queue(streamer["id"], cfg=cfg)
         now = songlist.current_from_queue(playing, upcoming)
+        # Print the now-playing requester too, not just the upcoming rows —
+        # the now-playing card is a separate v2 object (NowPlayingDetails), so
+        # a requester that resolves in the queue can still be missing here.
+        now_view = songlist.queue_item_view(playing, 0) if playing else None
         print(f"playing   : {now[0] + ' — ' + now[1] if now else '(nothing)'}"
+              f"{'  (' + now_view['requester'] + ')' if now_view and now_view['requester'] else ''}"
               f"{'' if playing else '   [slot empty; fell back to queue top]'}")
         print(f"upcoming  : {len(upcoming)}")
         for i, item in enumerate(upcoming[:5], start=1):

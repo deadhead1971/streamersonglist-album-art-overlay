@@ -21,7 +21,7 @@ Windows environment (PowerShell 5.1); paths contain spaces — quote everything 
 Modules in `app/`:
 
 - `config.py` — loads/saves `config.json` (gitignored; created from `config.example.json` on first run). All tunables live here: username, song source, output/fallback image paths, `skip_artists`, reflection settings.
-- `songlist.py` — StreamerSonglist API client (public, no auth): resolve username → streamer id, fetch songs, poll live queue.
+- `songlist.py` — StreamerSonglist API client, speaking **both v1 and v2** behind one set of functions (backend detected once per session). Production has been v2 since 2026-08-12, where every read needs the configured token and the queue splits into a `playing` slot plus upcoming-only `items`. Resolve username → streamer id, fetch songs, poll live queue. Treat v2 field *contents* as unverified even when the schema matches v1: `requests[].name` still exists but comes back `""` for platform requests, with the requester in `requests[].user.username` — `queue_item_view` reads `name` first (manual adds keep free text there) and falls back to the user.
 - `sources.py` — artwork search cascade: iTunes (primary) → Last.fm (only if user supplies a key — never hardcode one) → MusicBrainz/Cover Art Archive (release-group level, 1 req/sec, descriptive User-Agent). Every result passes artist fuzzy-match (~0.6) and a compilation/karaoke blocklist that deprioritises (not rejects).
 - `library.py` — the artwork library: `library/manifest.json` + full-resolution PNGs named `Artist - Title.png`. Statuses: `proposed` / `confirmed` / `unverified` (grabbed live, needs review) / `rejected_all`. The manifest tolerates manually deleted image files (entry reverts to needing art).
 - `artwork.py` — shared artwork logic used by both the runtime service and dashboard request handlers: propose/reject-cycle/upload, plus `resolve_artwork_for_song` (the live lookup order: skip_artists → fallback; library confirmed, else proposed/unverified; live cascade, result saved as `unverified` for post-stream review; fallback + `rejected_all` stub), `apply_fallback`, and `read_song_file`.
@@ -35,7 +35,7 @@ Modules in `app/`:
 - `library.normalize_key(title, artist)` is the shared normalisation (lowercase, strip diacritics/punctuation/`(live)` suffixes) used by **both** dashboard and runtime — it's what makes library lookups hit. Search terms are stripped of suffixes, but library/cache keys use the original title.
 - Images are stored at source resolution; resize + reflection happen at output time, so config changes never require re-fetching.
 - Bulk propose is throttled (~3s/call, iTunes limit ~20/min), runs in a background thread with a polled progress endpoint, and is resumable — never block a request handler on it.
-- Flask binds `127.0.0.1` only. Dashboard port is **5050**.
+- Flask binds `127.0.0.1` only. Dashboard port is **5050**, and it is **single-instance**: `run()` connects to the port first and exits rather than starting a second copy. Werkzeug sets `SO_REUSEADDR`, so on Windows a second dashboard binds an already-bound port *successfully* — the two then share it, the older process keeps answering with the code it started with, and both log to the same file, so a restart looks clean while stale code serves the overlays. If an edit doesn't show up over HTTP, check `netstat -ano | findstr :5050` for a second listener before suspecting the code.
 
 ## Constraints
 
