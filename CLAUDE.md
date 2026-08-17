@@ -10,7 +10,7 @@ A tool for music streamers using StreamerSonglist. One app — the **dashboard**
 
 ## Commands
 
-- Install: `pip install -r requirements.txt` (Flask, requests, Pillow)
+- Install: `pip install -r requirements.txt` (Flask, requests, Pillow, centrifuge-python). `centrifuge-python` pulls `protobuf` unpinned — in a shared environment install `protobuf<6` afterwards or it breaks tensorflow / google-api-*.
 - Run dashboard: `python -m app.dashboard`
 - No tests or linter are configured. Verify by running the app; logs go to `artwork_fetcher.log`.
 
@@ -26,7 +26,8 @@ Modules in `app/`:
 - `library.py` — the artwork library: `library/manifest.json` + full-resolution PNGs named `Artist - Title.png`. Statuses: `proposed` / `confirmed` / `unverified` (grabbed live, needs review) / `rejected_all`. The manifest tolerates manually deleted image files (entry reverts to needing art).
 - `artwork.py` — shared artwork logic used by both the runtime service and dashboard request handlers: propose/reject-cycle/upload, plus `resolve_artwork_for_song` (the live lookup order: skip_artists → fallback; library confirmed, else proposed/unverified; live cascade, result saved as `unverified` for post-stream review; fallback + `rejected_all` stub), `apply_fallback`, and `read_song_file`.
 - `imaging.py` — resize, reflection effect, and the **atomic PNG save with PermissionError retry** (OBS holds a read handle on the output file — keep this exactly as is).
-- `runtime.py` — in-process background service (started by the dashboard). One tick per interval polls the queue (feeds the cached queue behind `/overlay/queue.json`) and resolves the current song — queue top, or the song file in `file` mode — to the PNG output via `artwork.resolve_artwork_for_song`. Creates a fresh `Library` per resolve; all manifest I/O is serialised via `library.MANIFEST_LOCK`. In `file` mode it runs even without an SSL username (PNG only, empty overlay).
+- `runtime.py` — in-process background service (started by the dashboard). One tick polls the queue (feeds the cached queue behind `/overlay/queue.json`) and resolves the current song — queue top, or the song file in `file` mode — to the PNG output via `artwork.resolve_artwork_for_song`. Creates a fresh `Library` per resolve; all manifest I/O is serialised via `library.MANIFEST_LOCK`. In `file` mode it runs even without an SSL username (PNG only, empty overlay). The tick waits on a `threading.Event` that `events.EventDoorbell` rings, with `poll_interval` as the timeout — so it is event-driven when the socket is up and timer-driven otherwise.
+- `events.py` — subscribes to SSL's Centrifugo realtime events (v2 only) and rings the runtime tick on `queue_*` / `now_playing_*`. It is a **doorbell, not a data feed**: it never parses payloads, because subscriptions carry no state snapshot, `data` is nullable meaning "refetch", and `queue_reorder` is skipped above 1000 entries — REST is the source of truth either way. Anonymous connect (public `streamer:{id}` channels need no token even though every v2 REST read does). asyncio-only SDK, so it owns a private event loop on a daemon thread. **Never load-bearing** — missing dependency, refused connection, v1 backend, or a mid-stream drop all fall back to plain polling.
 - `dashboard.py` — Flask routes; templates in `app/templates/`, CSS in `app/static/`. Overlay routes: `/overlay` (settings + OBS URL), `/overlay/queue` (transparent browser-source page; style presets, config-driven with query-param overrides), `/overlay/queue.json` (data; never triggers artwork fetches — library hit or fallback only).
 
 ### Key joints

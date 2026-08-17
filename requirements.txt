@@ -1,3 +1,8 @@
 Flask>=3.0
 requests>=2.31
 Pillow>=10.0
+# Realtime queue events (app/events.py). Optional at runtime — the runtime
+# service falls back to polling if it isn't installed. Note it pulls in
+# protobuf unpinned; if you share this environment with something that pins
+# protobuf (tensorflow, google-api-*), install protobuf<6 afterwards.
+centrifuge-python>=0.6

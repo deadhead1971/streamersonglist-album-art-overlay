@@ -49,7 +49,15 @@ DEFAULT_CONFIG = {
     #   "file"                        — read a text file another tool writes
     "song_source": "streamersonglist",
     # Seconds between runtime service ticks (queue poll / song-file check).
+    # With realtime events connected this stretches to a slow safety net —
+    # changes arrive over the socket instead.
     "poll_interval": 10,
+    # Subscribe to SSL's realtime event stream (v2 only) so queue changes apply
+    # immediately instead of on the next poll. Falls back to polling by itself
+    # if the socket is unavailable; turn off to force polling.
+    "websocket_events": True,
+    # Blank = production events host; set it to test against staging.
+    "events_url": "",
     "song_file": "",
     "output_image": "",
     "fallback_image": "",

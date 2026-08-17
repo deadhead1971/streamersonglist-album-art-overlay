@@ -68,9 +68,19 @@
         StreamerSonglist queue (recommended) — reads the song at the top of your
         live queue. No extra setup: just your username above.
       </label>
+      <label class="checkbox">
+        <input type="checkbox" name="websocket_events"
+               {{ 'checked' if cfg.websocket_events }}>
+        Instant updates — subscribe to StreamerSonglist's live event stream so
+        the artwork and overlays change the moment your queue does, instead of
+        waiting for the next poll. Falls back to polling on its own if the
+        connection drops.
+      </label>
       <label>Poll interval (seconds)
         <input type="number" name="poll_interval" value="{{ cfg.poll_interval }}"
                min="2" max="120" size="4"></label>
+      <p class="muted">With instant updates on, this is only a safety net for
+        anything the live connection misses.</p>
       <label class="checkbox">
         <input type="radio" name="song_source" value="file"
                {{ 'checked' if cfg.song_source == 'file' }}>

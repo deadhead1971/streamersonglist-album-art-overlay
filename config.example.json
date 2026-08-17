@@ -6,6 +6,8 @@
   "platform": "twitch",
   "song_source": "streamersonglist",
   "poll_interval": 10,
+  "websocket_events": true,
+  "events_url": "",
   "song_file": "",
   "output_image": "",
   "fallback_image": "",

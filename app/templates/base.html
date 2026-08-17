@@ -27,8 +27,12 @@
         const song = d.current_title
           ? `▶ ${d.current_title}${d.current_artist ? ' — ' + d.current_artist : ''}`
           : 'queue empty';
-        el.innerHTML = `<span class="dot on"></span> Live service: ${song} · ${d.queue_length} queued`;
-        el.title = 'Writing the artwork image and serving the overlays';
+        const live = d.events && d.events.connected && d.events.subscribed;
+        el.innerHTML = `<span class="dot on"></span> Live service: ${song} · ${d.queue_length} queued`
+          + (live ? ` · <span class="bolt" title="Instant updates connected">⚡</span>` : '');
+        el.title = live
+          ? 'Writing the artwork image and serving the overlays — instant updates connected'
+          : 'Writing the artwork image and serving the overlays — polling';
       } else {
         el.innerHTML = `<span class="dot off"></span> Live service off`;
         el.title = d.error || 'Enable in Settings (song source + runtime service)';

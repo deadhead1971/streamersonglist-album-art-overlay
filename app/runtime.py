@@ -2,7 +2,7 @@
 Background runtime service — the live loop running inside the dashboard
 process. The dashboard is the only process needed during a stream.
 
-One thread ticks every ``poll_interval`` seconds and:
+One thread ticks and:
   1. polls the SSL queue and caches it in memory (feeds the
      /overlay/queue.json endpoint — the overlay never triggers extra API
      calls), and
@@ -11,6 +11,15 @@ One thread ticks every ``poll_interval`` seconds and:
      slot (falling back to the top of the upcoming queue when that slot is
      empty), or — when ``song_source`` is ``file`` — the contents of the
      configured song file, read on the same tick.
+
+What drives the tick depends on what's available. On the v2 API an
+``events.EventDoorbell`` subscribes to SSL's Centrifugo channel and wakes the
+thread the moment the queue changes, so artwork follows a song change in
+roughly the time one REST call takes. The ``poll_interval`` timer stays as a
+reconciliation net (stretched to ``IDLE_INTERVAL`` while the socket is up), and
+takes over again untouched whenever the doorbell is unavailable, disabled, on
+v1, or simply dropped mid-stream. The socket is an accelerator; it is never
+load-bearing.
 
 In file mode a missing/unresolvable SSL username is not fatal: the queue
 overlay has nothing to show, but the PNG output still works.
@@ -27,10 +36,18 @@ import time
 
 import requests
 
-from . import artwork, songlist
+from . import artwork, events, songlist
 from .library import Library
 
 log = logging.getLogger("artwork_fetcher")
+
+# Poll spacing while the realtime doorbell is connected. Long on purpose: it is
+# only catching what the socket could have missed.
+IDLE_INTERVAL = 60.0
+
+# Floor between two ticks. A queue reorder publishes a burst of events, and
+# each one must not turn into its own REST call.
+MIN_TICK_GAP = 1.0
 
 
 class RuntimeService:
@@ -38,6 +55,9 @@ class RuntimeService:
         self._lock = threading.Lock()
         self._thread = None
         self._stop = threading.Event()
+        # Set to run the tick body early — by a realtime event, or by stop().
+        self._wake = threading.Event()
+        self._events = events.EventDoorbell(self._wake.set)
         # State (guarded by _lock)
         self._running = False
         self._streamer_id = None
@@ -58,6 +78,7 @@ class RuntimeService:
             self._running = True
             self._error = None
         self._stop.clear()
+        self._wake.clear()
         self._thread = threading.Thread(
             target=self._run, args=(cfg,), daemon=True, name="runtime-service"
         )
@@ -65,7 +86,11 @@ class RuntimeService:
         return True
 
     def stop(self):
+        self._events.stop()
         self._stop.set()
+        # The tick thread waits on _wake, so stopping has to ring it too or the
+        # join in restart() would sit out a full interval.
+        self._wake.set()
 
     def restart(self, cfg: dict):
         """
@@ -99,6 +124,7 @@ class RuntimeService:
                 "error": self._error,
                 "queue_age": (time.monotonic() - self._queue_at)
                               if self._queue_at else None,
+                "events": self._events.state(),
             }
 
     def get_queue(self, cfg: dict, max_age: float = 15.0):
@@ -171,16 +197,45 @@ class RuntimeService:
             log.info("Runtime service watching song file every %ss (no SSL "
                      "username — queue overlay disabled)", interval)
         else:
-            log.info("Runtime service polling SSL queue for %s every %ss "
-                     "(current song from %s)", self._streamer_name, interval,
+            log.info("Runtime service watching SSL queue for %s (poll interval "
+                     "%ss; current song from %s)", self._streamer_name, interval,
                      "song file" if file_mode else "now-playing slot")
+
+        # Realtime doorbell. v1 is excluded deliberately: the events service
+        # keys on v2 streamer ids, and v1 hands out different ids for the same
+        # channel, so subscribing would quietly follow someone else's queue.
+        if streamer_id is not None and cfg.get("websocket_events", True):
+            try:
+                if songlist.detect_backend(cfg) == "v2":
+                    self._events.start(streamer_id, cfg)
+            except requests.RequestException as e:
+                log.info("Realtime events not started (%s) — polling only", e)
 
         # Sentinel so the very first tick always writes the output image (even
         # when the queue/file starts out empty → fallback).
         last = object()
         first = True
         backoff = 0.0  # extra seconds added after a 429
-        while not self._stop.wait(0 if first else interval + backoff):
+        last_tick = 0.0
+        while not self._stop.is_set():
+            if not first:
+                # Connected: events drive the tick and this is just the net.
+                # Dropped: the wait silently returns to plain polling.
+                # File mode never stretches — the song file is read on this
+                # timer and no queue event announces a change to it.
+                relaxed = self._events.is_connected() and not file_mode
+                wait_for = (IDLE_INTERVAL if relaxed else interval) + backoff
+                self._wake.wait(timeout=wait_for)
+                if self._stop.is_set():
+                    break
+                gap = time.monotonic() - last_tick
+                if gap < MIN_TICK_GAP and self._stop.wait(MIN_TICK_GAP - gap):
+                    break
+            # Cleared *before* the fetch, never after: an event landing while a
+            # fetch is in flight has to schedule another tick rather than be
+            # swallowed by the one that didn't see its change.
+            self._wake.clear()
+            last_tick = time.monotonic()
             first = False
 
             # Queue poll — feeds the overlay, and in queue mode the PNG too.
@@ -242,6 +297,7 @@ class RuntimeService:
                     # stale manifest across dashboard edits.
                     artwork.resolve_artwork_for_song(cfg, Library(), *result)
 
+        self._events.stop()
         with self._lock:
             self._running = False
         log.info("Runtime service stopped")
