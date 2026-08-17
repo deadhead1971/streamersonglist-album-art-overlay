@@ -9,8 +9,8 @@ One app — the **dashboard** — does two jobs:
 - **Between streams** it pulls your songlist from StreamerSonglist, finds album
   artwork for every song, and lets you confirm, reject, or upload your own image
   for each one. The images you approve become your **artwork library**.
-- **During your stream** its built-in live service polls your StreamerSonglist
-  queue, takes whatever is in your now-playing slot as the current song, writes
+- **During your stream** its built-in live service follows your StreamerSonglist
+  queue live, takes whatever is in your now-playing slot as the current song, writes
   an artwork image file for OBS, and serves the queue and now-playing overlays. (It can also read
   a text file instead, if you drive your current song some other way.) It uses
   your approved library first; if a song isn't in the library yet, it grabs a
@@ -88,6 +88,11 @@ Double-click **`run_dashboard.bat`** (or run `python -m app.dashboard`).
   - **Fallback image** — shown for your own originals and for songs with no art.
   - **Skip artists** — your own artist name(s), comma separated. Songs by these
     artists use the fallback image instead of searching.
+  - **Instant updates** — on by default. The app subscribes to StreamerSonglist's
+    live event stream so the artwork and overlays change the moment your queue
+    does, instead of waiting for the next check. If the connection isn't
+    available it quietly goes back to checking on a timer, so there's nothing to
+    do if it drops.
   - (Optional) **iTunes country**, **Last.fm API key**, reflection/size settings.
 - Click **Save settings**.
 
@@ -114,14 +119,16 @@ The keyboard shortcuts make reviewing a long list fast.
 ## 6. During your stream
 
 Keep the **dashboard** (`run_dashboard.bat`) running while you're live. It runs
-a built-in live service that polls your StreamerSonglist queue every few
-seconds and, whenever the now-playing song changes, writes the artwork image for
-OBS. Play through your queue as usual and the artwork follows automatically —
+a built-in live service that watches your StreamerSonglist queue and, whenever
+the now-playing song changes, writes the artwork image for OBS — normally
+within about half a second. Play through your queue as usual and the artwork
+follows automatically —
 StreamerSonglist promotes the top of your queue into the now-playing slot, and
 if that slot is empty the app falls back to the top of the queue. When your
 queue is empty entirely, the fallback image is shown.
 The header shows a status indicator (current song and queue length) so you can
-sanity-check it before going live. (With the **Text file** source the live
+sanity-check it before going live; a ⚡ next to it means instant updates are
+connected. (With the **Text file** source the live
 service reads your song file instead of the queue — everything else works the
 same.)
 
@@ -184,4 +191,11 @@ committed to git — they're yours and local.
   **Upload** your own image.
 - **Last.fm is skipped** — that's expected unless you add your own free API key in
   Settings.
+- **No ⚡ in the header** — instant updates aren't connected, and the app is
+  checking your queue on a timer instead. Everything still works, just a little
+  less immediately. It reconnects on its own.
+- **`pip install` broke another Python project** — this app's realtime library
+  pulls in `protobuf`, which some other tools (TensorFlow, Google APIs) pin to
+  an older version. If that affects you, run `pip install "protobuf<6"`
+  afterwards, or install this app in its own virtual environment.
 - **Logs** — see `artwork_fetcher.log` in the project folder.
