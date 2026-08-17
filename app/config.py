@@ -12,6 +12,8 @@ import json
 import shutil
 from pathlib import Path
 
+from . import __version__
+
 # Repo root = parent of the app package directory.
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -24,9 +26,10 @@ MANIFEST_PATH = LIBRARY_DIR / "manifest.json"
 LOG_FILE = ROOT / "artwork_fetcher.log"
 
 # MusicBrainz asks that the User-Agent identify the app + a contact URL. Identify
-# the tool and its repo, not the streamer running it.
+# the tool and its repo, not the streamer running it. Built from __version__ so
+# the two can't drift — they did between 1.0 and 1.1.0.
 USER_AGENT = (
-    "StreamerSonglistAlbumArtOverlay/1.0 "
+    f"StreamerSonglistAlbumArtOverlay/{__version__} "
     "(+https://github.com/deadhead1971/streamersonglist-album-art-overlay)"
 )
 
