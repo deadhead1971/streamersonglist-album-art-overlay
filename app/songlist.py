@@ -413,8 +413,15 @@ def queue_item_view(item: dict, position: int) -> dict:
     at 0 and starts the upcoming queue at 1), so trusting it would make the
     overlay renumber itself on cutover day.
 
-    ``requests`` is a list of {name, ...} — multiple requesters are joined. The
-    field is handled defensively because its shape isn't formally documented.
+    ``requests`` is a list of request rows — multiple requesters are joined.
+
+    Reading the requester needs both fields. v1 filled ``name`` on every row.
+    v2 leaves it "" for platform requests (``source: "twitch"``) and puts the
+    identity in ``user.username`` — verified live 2026-08-17, which is why the
+    overlays showed no "requested by" line after cutover. ``name`` still comes
+    first: manual adds carry free text there that ``user`` cannot reproduce
+    ("<viewer> (needs dusting)"), and website/v1-era rows keep rendering
+    exactly as they did.
     """
     parsed = _queue_item_song(item)
     if parsed is None:
@@ -427,6 +434,10 @@ def queue_item_view(item: dict, position: int) -> dict:
         for r in reqs:
             if isinstance(r, dict):
                 name = (r.get("name") or "").strip()
+                if not name:
+                    user = r.get("user")
+                    if isinstance(user, dict):
+                        name = (user.get("username") or "").strip()
                 if name:
                     names.append(name)
             elif isinstance(r, str) and r.strip():

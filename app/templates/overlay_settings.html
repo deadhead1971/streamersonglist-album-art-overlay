@@ -111,9 +111,20 @@
   <div class="flash welcome">
     <strong>Add to OBS:</strong> a second <em>Browser</em> source showing just
     the current song with large artwork — tick <em>Local file</em> and point
-    it at this loader (suggested size: 600 × 220 horizontal, 320 × 480
-    vertical). Pairs well with the queue overlay above with
+    it at this loader. Pairs well with the queue overlay above with
     <em>Include the current song</em> unticked.
+    {# Sized from the live settings: a fixed hint goes stale the moment the
+       art or font size changes, and too narrow a source trims long titles. #}
+    {% set _text_h = (cur_opts.font_size * 3.6) | round(0, 'ceil') | int %}
+    {% set _art_h = cur_opts.art_size if cur_opts.show_artwork else 0 %}
+    <p class="muted" style="margin:.6em 0 0"><strong>Size it generously
+      wide</strong> — the card paints only as wide as the song title needs and
+      the rest of the source stays transparent, so spare width costs nothing
+      and keeps long titles from being trimmed. At your current settings:
+      <strong>{{ ([_art_h, _text_h] | max) + 40 }} px high</strong> for
+      horizontal, at whatever width you can give it (your full canvas width is
+      fine); <strong>{{ cur_opts.art_size + 40 }} × {{ cur_opts.art_size + _text_h + 48 }}</strong>
+      for vertical.</p>
     <div class="row" style="margin-top:.5em">
       <input type="text" id="current-loader" readonly value="{{ current_loader }}"
              style="flex:1" onclick="this.select()">
