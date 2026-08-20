@@ -23,7 +23,7 @@ from flask import (
 )
 from PIL import Image
 
-from . import artwork, config, runtime, songlist
+from . import __version__, artwork, config, runtime, songlist, updates
 from .library import (
     Library, STATUS_PROPOSED, STATUS_UNVERIFIED,
     normalize_key,
@@ -32,6 +32,13 @@ from .library import (
 log = logging.getLogger("artwork_fetcher")
 
 app = Flask(__name__)
+
+
+@app.context_processor
+def inject_version():
+    """Every page footer/banner can show which version is running."""
+    return {"app_version": __version__}
+
 
 # Snapshot of the last fetched songlist (for the songs table). Lives beside the
 # manifest so a removed-from-SSL song can still be shown/filtered.
@@ -261,6 +268,7 @@ def settings_page():
                            platforms=_PLATFORMS,
                            token_set=bool((cfg.get("api_token") or "").strip()),
                            token_mask=TOKEN_MASK,
+                           update=updates.state(cfg),
                            needs_setup=not cfg.get("streamersonglist_username"))
 
 
@@ -311,6 +319,10 @@ def save_settings():
             ref[fld] = cast(form.get(f"reflection_{fld}", ref.get(fld)))
         except (ValueError, TypeError):
             pass
+
+    cfg.setdefault("updates", {})["check_enabled"] = (
+        form.get("updates_check_enabled") == "on"
+    )
 
     config.save_config(cfg)
     # Host/token/platform may have changed — re-probe which API is live.
@@ -582,6 +594,40 @@ def serve_image():
 
 
 # ---------------------------------------------------------------------------
+# Update check
+# ---------------------------------------------------------------------------
+
+@app.route("/api/update")
+def api_update():
+    """Cached answer only — a page load must never wait on GitHub."""
+    return jsonify(updates.state(config.load_config()))
+
+
+@app.route("/api/update/check", methods=["POST"])
+def api_update_check():
+    """
+    Force a fresh check ("Check now" on Settings). This is the one path that
+    surfaces errors, because here the user asked for the answer.
+    """
+    updates.check()
+    return jsonify(updates.state(config.load_config()))
+
+
+@app.route("/api/update/skip", methods=["POST"])
+def api_update_skip():
+    """
+    Dismiss the current release. Persisted, so it stays dismissed across
+    restarts — but only for this version, so the next release still shows.
+    Posting with no version clears the dismissal instead.
+    """
+    cfg = config.load_config()
+    version = (request.json or {}).get("version", "") if request.is_json else ""
+    cfg.setdefault("updates", {})["skipped_version"] = str(version).strip()
+    config.save_config(cfg)
+    return jsonify(updates.state(cfg))
+
+
+# ---------------------------------------------------------------------------
 # Runtime service + queue overlay
 # ---------------------------------------------------------------------------
 
@@ -607,6 +653,7 @@ _OVERLAY_BOOL_KEYS = {
     "artist": "show_artist",
     "requester": "show_requester",
     "position": "show_position",
+    "promo": "show_promo",
 }
 
 
@@ -619,6 +666,7 @@ _CURRENT_BOOL_KEYS = {
     "requester": "show_requester",
     "label": "show_label",
     "hide_empty": "hide_when_empty",
+    "promo": "show_promo",
 }
 
 
@@ -681,6 +729,139 @@ def _resolve_art(lib: Library, title: str, artist: str) -> str:
     return url_for("overlay_fallback_image")
 
 
+# Avatar of the configured streamer, resolved at most once per username so the
+# promo image cannot turn into an API call per overlay render.
+_AVATAR_CACHE = {"key": None, "url": None}
+
+
+def _streamer_avatar(cfg: dict):
+    """
+    The streamer's avatar URL (v2 API only — v1 hands out no avatar), from the
+    runtime service if it is up, else resolved and cached here.
+    """
+    url = runtime.service.status().get("avatar")
+    if url:
+        return url
+    username = (cfg.get("streamersonglist_username") or "").strip()
+    if not username:
+        return None
+    if _AVATAR_CACHE["key"] == username:
+        return _AVATAR_CACHE["url"]
+    try:
+        streamer = songlist.resolve_streamer(username, cfg=cfg)
+    except requests.RequestException:
+        # Covers AuthRequired too, and none of it is fatal here — the promo
+        # card just falls back to the fallback image.
+        return None
+    _AVATAR_CACHE.update(key=username, url=streamer.get("avatar"))
+    return _AVATAR_CACHE["url"]
+
+
+def _promo_image_path(cfg: dict, state: str) -> str:
+    """
+    The configured promo image for one card state. The closed card falls back
+    to the open card's image, so a second graphic is optional.
+    """
+    promo = cfg.get("promo", {})
+    path = (promo.get("closed_image") or "").strip() if state == "closed" else ""
+    return path or (promo.get("image") or "").strip()
+
+
+def _promo_version(cfg: dict, state: str = "open") -> str:
+    """Cache-buster for the promo image, so swapping the file shows up in OBS."""
+    path = _promo_image_path(cfg, state)
+    if not path:
+        return "avatar"
+    try:
+        return str(int(Path(path).stat().st_mtime))
+    except OSError:
+        return "0"
+
+
+def _promo_item(cfg: dict, opts: dict, args):
+    """
+    The synthetic queue item for the empty-queue promo card, or None when the
+    promo is off for this overlay, the queue has not been empty long enough, or
+    requests are closed and no closed-card message is set.
+
+    The fixed ``id`` is load-bearing: both overlays key their animations on it,
+    so a promo that stays put across polls must keep one identity, and a real
+    request landing must read as a different one — which is exactly what makes
+    the swap animate like any other queue change. The two card states share it
+    deliberately: open→closed restyles in place rather than animating out and
+    back in.
+
+    ``?promo_demo=1`` skips the empty-for delay; ``=open`` / ``=closed`` also
+    pin the card state, for styling both without touching StreamerSonglist.
+    """
+    if not opts.get("show_promo"):
+        return None
+    promo = cfg.get("promo", {})
+
+    demo = (args.get("promo_demo") or "").strip().lower()
+    if demo in ("0", "false", "no"):
+        demo = ""
+    if not demo:
+        try:
+            delay = min(300, max(0, int(promo.get("delay_seconds", 8))))
+        except (TypeError, ValueError):
+            delay = 8
+        # None means "not empty", or "no poll has landed yet" — and not having
+        # looked is not the same as there being nothing there.
+        empty_for = runtime.service.empty_for()
+        if empty_for is None or empty_for < delay:
+            return None
+
+    # Only a definite "closed" picks the closed card. Unknown — v1, no username,
+    # or a check that has never succeeded — reads as open: losing the card on a
+    # failed API read is worse than showing it a minute after requests shut.
+    if demo in ("open", "closed"):
+        active = demo == "open"
+    else:
+        active = runtime.service.requests_active() is not False
+
+    state = "open" if active else "closed"
+    text = (promo.get("text" if active else "closed_text") or "").strip()
+    subtext = (promo.get("subtext" if active else "closed_subtext") or "").strip()
+    # A blank closed message is how you say "show nothing while requests are
+    # shut" — there is no separate checkbox for it.
+    if not active and not text:
+        return None
+
+    return {
+        "id": "promo",
+        "promo": True,
+        "position": None,
+        "title": text,
+        "artist": subtext,
+        "requester": None,
+        "art": url_for("overlay_promo_image", state=state,
+                       v=_promo_version(cfg, state)),
+    }
+
+
+@app.route("/overlay/promo.png")
+def overlay_promo_image():
+    """
+    Art for the promo card: the configured image, else the streamer's avatar,
+    else whatever the fallback image would be.
+
+    This is a route rather than a path handed to the page because the overlays
+    are served over http, and a browser source will not load a file:// image
+    from an http page.
+    """
+    cfg = config.load_config()
+    path = _promo_image_path(cfg, request.args.get("state", "open"))
+    if path and Path(path).exists():
+        return send_file(path)
+    avatar = _streamer_avatar(cfg)
+    if avatar:
+        # Redirect rather than proxy: the avatar URL is public and OBS follows
+        # it, so there is nothing to gain from streaming the bytes twice.
+        return redirect(avatar)
+    return overlay_fallback_image()
+
+
 @app.route("/overlay/queue.json")
 def overlay_queue_json():
     cfg = config.load_config()
@@ -705,6 +886,15 @@ def overlay_queue_json():
             continue
         view["art"] = _resolve_art(lib, view["title"], view["artist"])
         rows.append(view)
+
+    # Nothing to show: offer the promo card instead of an empty overlay. Note
+    # this is "this overlay has no rows", so with the current song excluded a
+    # last song playing out with nothing behind it counts as empty here — the
+    # now-playing card beside it still shows the real song.
+    if not rows:
+        promo = _promo_item(cfg, opts, request.args)
+        if promo is not None:
+            rows.append(promo)
 
     return jsonify({"items": rows, "options": opts})
 
@@ -741,6 +931,9 @@ def overlay_current_json():
     view = songlist.queue_item_view(item, 1) if item is not None else None
     if view is not None:
         view["art"] = _resolve_art(Library(), view["title"], view["artist"])
+    else:
+        # Promo card wins over hide_when_empty: showing something is the point.
+        view = _promo_item(cfg, opts, request.args)
     return jsonify({"item": view, "options": opts})
 
 
@@ -766,6 +959,8 @@ def overlay_settings_page():
                            queue_loader=str(loader_dir / "overlay_queue.html"),
                            current_loader=str(loader_dir / "overlay_current.html"),
                            cur_opts=cur_opts, current_url=current_url,
+                           promo=cfg.get("promo", {}),
+                           has_avatar=bool(_streamer_avatar(cfg)),
                            layouts=_CURRENT_LAYOUTS,
                            overlay_url=overlay_url, presets=_OVERLAY_PRESETS,
                            animations=_OVERLAY_ANIMATIONS, speeds=_OVERLAY_SPEEDS)
@@ -829,6 +1024,28 @@ def save_overlay_current_settings():
 
     config.save_config(cfg)
     return redirect(url_for("overlay_settings_page", saved="current"))
+
+
+@app.route("/overlay/promo", methods=["POST"])
+def save_overlay_promo_settings():
+    """
+    The promo card's content. Shared by both overlays — only whether each one
+    shows it (``show_promo``) is per-overlay, saved with that overlay's form.
+    """
+    cfg = config.load_config()
+    form = request.form
+    opts = cfg.setdefault("promo", {})
+
+    for key in ("text", "subtext", "image",
+                "closed_text", "closed_subtext", "closed_image"):
+        opts[key] = form.get(key, "").strip()
+    try:
+        opts["delay_seconds"] = min(300, max(0, int(form.get("delay_seconds", 8))))
+    except (TypeError, ValueError):
+        opts["delay_seconds"] = 8
+
+    config.save_config(cfg)
+    return redirect(url_for("overlay_settings_page", saved="promo") + "#promo")
 
 
 # ---------------------------------------------------------------------------
@@ -897,6 +1114,7 @@ def run(host="127.0.0.1", port=5050, open_browser=True):
 
     first_run = config.ensure_config()
     cfg = config.load_config()
+    updates.start_background_check(cfg)
     if _runtime_wanted(cfg):
         runtime.service.start(cfg)
     if open_browser:

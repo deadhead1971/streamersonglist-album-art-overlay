@@ -48,6 +48,13 @@ DEFAULT_EVENTS_URL = "wss://events.streamersonglist.com/connection/websocket"
 
 # Event types worth a refetch. Everything else on the channel (settings edits,
 # action log, token balance, ...) can't change the overlay or the artwork.
+#
+# One caveat since the empty-queue promo card: SSL's requests open/closed
+# switch *is* a settings edit, and it does change what that card says. It is
+# not added here because the runtime service reads it over REST only while the
+# queue is empty — the card is the one thing on screen then, and a 30s lag on
+# it is not worth parsing settings payloads for. If that ever needs to be
+# instant, the event name has to be learned by logging the channel unfiltered.
 RELEVANT_PREFIXES = ("queue_", "now_playing_")
 
 try:  # Optional dependency — absent means "keep polling", not "crash".

@@ -254,6 +254,25 @@ def resolve_streamer(username: str, cfg: dict = None) -> dict:
     }
 
 
+def fetch_requests_active(username: str, cfg: dict = None):
+    """
+    Whether the streamer is currently accepting requests, or None when the
+    backend does not say so (v1, or the field going away).
+
+    v2 carries this as ``requestsActive`` on the streamer record. Verified
+    flipping on 2026-08-20: it read False with requests closed and True after
+    opening them, with nothing else in the payload moving. The neighbouring
+    ``canUserRequest`` / ``canAnonymousRequest`` / ``requestMode`` fields are
+    standing permissions and are *not* the live switch.
+
+    Raises requests.RequestException (incl. AuthRequired) on failure, so a
+    caller can tell "closed" from "could not ask".
+    """
+    raw = resolve_streamer(username, cfg=cfg).get("raw") or {}
+    value = raw.get("requestsActive")
+    return value if isinstance(value, bool) else None
+
+
 # ---------------------------------------------------------------------------
 # Songs
 # ---------------------------------------------------------------------------

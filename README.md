@@ -154,6 +154,25 @@ Lookup order for each song:
 After a stream, open the dashboard's **Queue** page to review anything that was
 grabbed live and confirm or replace it.
 
+### When the queue is empty
+
+Rather than sitting empty between requests, either overlay can show a card
+inviting viewers to request something — your own message, with your channel
+avatar (or any image you pick) in place of the album art. It is off by default:
+tick **Show the empty-queue card** on the Overlay page for whichever overlays
+you want it on, and write the message under **Empty-queue card**.
+
+The card appears once the queue has been empty for a few seconds — so it does
+not flash up between songs — and is replaced by the real queue the moment a
+request lands.
+
+It also knows whether you are **taking requests**. When your songlist is closed
+it switches to a second message you set separately (*"Requests open at 8pm"*),
+which covers the pre-stream window too — or shows nothing at all, if you leave
+that message blank. Use the **Preview the empty-queue card** dropdown under
+either preview to see both states without touching your live queue or your
+request settings.
+
 ## 7. Your artwork library
 
 Images live in the `library/` folder, named `Artist - Title.png`, at full
@@ -163,6 +182,26 @@ OBS, so changing the image size or reflection settings never means re-fetching.
 If a proposed image is wrong, you can just **delete the file** in `library/` — the
 tool notices it's gone and treats that song as needing art again.
 
+## 8. Staying up to date
+
+When the dashboard starts it asks GitHub whether there is a newer release. If
+there is, a banner appears at the top of every dashboard page with the version,
+what the release is called, and a link to the full notes. It never appears on
+your overlays — those are separate pages, so nothing can show up in OBS or on
+stream.
+
+**Dismiss** hides it for that version only. The next release brings it back.
+
+To update, download the new version (or `git pull` if you cloned), then restart
+the dashboard. Check the release notes for whether you also need to re-run
+`pip install -r requirements.txt` or refresh your OBS browser sources.
+
+The check is a single anonymous request to `api.github.com`. It sends nothing
+about you, your songlist or your library — only the app's name and version. Turn
+it off under **Settings → Updates** if you'd rather check
+[the releases page](https://github.com/deadhead1971/streamersonglist-album-art-overlay/releases)
+yourself, and use **Check now** on that same page any time.
+
 ## Files in this repo
 
 | File | What it does |
@@ -171,6 +210,7 @@ tool notices it's gone and treats that song as needing art again.
 | `config.example.json` | Template copied to `config.json` on first run. |
 | `app/` | The application code. |
 | `tools/probe_api.py` | Diagnostic: checks which StreamerSonglist API is answering and whether your token works. |
+| `tools/release.py` | For maintainers: bumps the version, commits and tags a release. |
 
 `config.json` (which holds your API token), your `library/`, and logs are **not**
 committed to git — they're yours and local.
@@ -194,6 +234,11 @@ committed to git — they're yours and local.
 - **No ⚡ in the header** — instant updates aren't connected, and the app is
   checking your queue on a timer instead. Everything still works, just a little
   less immediately. It reconnects on its own.
+- **"Couldn't reach github.com" when checking for updates** — you're offline, a
+  firewall is in the way, or you've checked many times in one hour and hit
+  GitHub's anonymous rate limit. It has no effect on anything else the app does;
+  try again later, or look at
+  [the releases page](https://github.com/deadhead1971/streamersonglist-album-art-overlay/releases).
 - **`pip install` broke another Python project** — this app's realtime library
   pulls in `protobuf`, which some other tools (TensorFlow, Google APIs) pin to
   an older version. If that affects you, run `pip install "protobuf<6"`

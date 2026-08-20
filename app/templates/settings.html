@@ -150,6 +150,42 @@
       </div>
     </fieldset>
 
+    <fieldset>
+      <legend>Updates</legend>
+      <div class="row">
+        <span>You are running <strong>v{{ update.current }}</strong></span>
+        <button type="button" id="update-btn" class="secondary">Check now</button>
+        <span id="update-result" class="muted">
+          {#- "newer", not "update_available": a dismissed release is still a
+              release, and this page is where someone comes to ask. The note
+              below explains why no banner is showing. -#}
+          {%- if update.newer %}
+          <span class="warn">{{ update.latest }} is available</span> —
+          <a href="{{ update.url }}" target="_blank" rel="noopener">what's new ↗</a>
+          {%- elif update.checked and not update.error %}Up to date
+          {%- endif %}
+        </span>
+      </div>
+      <label class="checkbox">
+        <input type="checkbox" name="updates_check_enabled"
+               {{ 'checked' if cfg.updates.check_enabled }}>
+        Check GitHub for a new version when the dashboard starts
+      </label>
+      <div class="muted small">
+        An anonymous request to <code>api.github.com</code> once per launch. It
+        sends nothing about you or your songlist — only the app name and
+        version. Turn it off and you'll need to check
+        <a href="https://github.com/deadhead1971/streamersonglist-album-art-overlay/releases"
+           target="_blank" rel="noopener">the releases page</a> yourself.
+      </div>
+      {% if update.skipped %}
+      <div class="muted small">
+        Update notices for <strong>{{ update.skipped }}</strong> are dismissed.
+        <a href="#" id="update-unskip">Show them again</a>
+      </div>
+      {% endif %}
+    </fieldset>
+
     <button type="submit" class="primary">Save settings</button>
   </form>
 </div>
@@ -163,26 +199,6 @@ document.querySelectorAll('[name=song_source]').forEach(el => {
   el.addEventListener('change', updateSongFileVisibility);
 });
 updateSongFileVisibility();
-
-document.querySelectorAll('.browse-btn').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const input = document.querySelector(`[name=${btn.dataset.target}]`);
-    btn.disabled = true;
-    try {
-      const r = await fetch('{{ url_for("api_browse") }}', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          kind: btn.dataset.kind,
-          initialfile: btn.dataset.initialfile || '',
-          filetypes: btn.dataset.filetypes || ''
-        })
-      });
-      const d = await r.json();
-      if (d.ok && d.path) input.value = d.path.replace(/\//g, '\\');
-    } catch (e) { /* dialog cancelled or failed — leave the field as is */ }
-    btn.disabled = false;
-  });
-});
 
 document.getElementById('test-btn').addEventListener('click', async () => {
   const el = document.getElementById('test-result');
@@ -211,6 +227,40 @@ document.getElementById('test-btn').addEventListener('click', async () => {
       }
     } else { el.textContent = `❌ ${d.error}`; el.className = 'err'; }
   } catch (e) { el.textContent = '❌ ' + e; el.className = 'err'; }
+});
+
+document.getElementById('update-btn').addEventListener('click', async (ev) => {
+  const el = document.getElementById('update-result');
+  ev.target.disabled = true;
+  el.textContent = 'Checking…';
+  el.className = 'muted';
+  try {
+    const d = await (await fetch('{{ url_for("api_update_check") }}', {method: 'POST'})).json();
+    if (d.error) {
+      // The user asked, so say what went wrong here — unlike the silent
+      // background check.
+      el.textContent = `❌ Couldn't reach GitHub: ${d.error}`;
+      el.className = 'err';
+    } else if (d.newer) {
+      el.innerHTML = `<span class="warn">${d.latest} is available</span> — `
+        + `<a href="${d.url}" target="_blank" rel="noopener">what's new ↗</a>`;
+      el.className = '';
+    } else {
+      el.textContent = `✅ Up to date (latest is ${d.latest || 'unknown'})`;
+      el.className = 'ok';
+    }
+  } catch (e) { el.textContent = '❌ ' + e; el.className = 'err'; }
+  ev.target.disabled = false;
+});
+
+const unskip = document.getElementById('update-unskip');
+if (unskip) unskip.addEventListener('click', async (ev) => {
+  ev.preventDefault();
+  // No version = clear the dismissal.
+  await fetch('{{ url_for("api_update_skip") }}', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'
+  });
+  location.reload();
 });
 </script>
 {% endblock %}

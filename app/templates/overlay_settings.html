@@ -54,6 +54,10 @@
                {{ 'checked' if opts.show_artist }}> Artist</label>
         <label class="checkbox"><input type="checkbox" name="show_requester"
                {{ 'checked' if opts.show_requester }}> Requested by</label>
+        <label class="checkbox"><input type="checkbox" name="show_promo"
+               {{ 'checked' if opts.show_promo }}>
+          Show the <a href="#promo">empty-queue card</a> when there's nothing
+          to list</label>
       </fieldset>
 
       <fieldset>
@@ -97,6 +101,12 @@
       <h2>Preview</h2>
       <iframe id="preview" src="{{ url_for('overlay_queue_page') }}"
               title="Overlay preview"></iframe>
+      <label>Preview the empty-queue card
+        <select class="promo-demo" data-frame="preview">
+          <option value="">off</option>
+          <option value="open">as if requests are open</option>
+          <option value="closed">as if requests are closed</option>
+        </select></label>
       <p class="muted">Shown over a checkerboard — in OBS the background is
         transparent. The preview uses your live queue; if it's empty, queue a
         few songs on StreamerSonglist to see it populated.</p>
@@ -169,6 +179,10 @@
                {{ 'checked' if cur_opts.show_artist }}> Artist</label>
         <label class="checkbox"><input type="checkbox" name="show_requester"
                {{ 'checked' if cur_opts.show_requester }}> Requested by</label>
+        <label class="checkbox"><input type="checkbox" name="show_promo"
+               {{ 'checked' if cur_opts.show_promo }}>
+          Show the <a href="#promo">empty-queue card</a> when the queue is
+          empty (instead of hiding)</label>
       </fieldset>
 
       <fieldset>
@@ -209,13 +223,101 @@
       <h2>Preview</h2>
       <iframe id="current-preview" src="{{ url_for('overlay_current_page') }}"
               title="Now-playing preview"></iframe>
+      <label>Preview the empty-queue card
+        <select class="promo-demo" data-frame="current-preview">
+          <option value="">off</option>
+          <option value="open">as if requests are open</option>
+          <option value="closed">as if requests are closed</option>
+        </select></label>
       <p class="muted">Shows the song at the top of your live queue. If the
         queue is empty and the card is set to hide, the preview will be blank.</p>
     </div>
   </div>
 </div>
 
+<div class="panel" id="promo">
+  <h1>Empty-queue card</h1>
+  {% if request.args.get('saved') == 'promo' %}<div class="flash ok">Empty-queue card saved.</div>{% endif %}
+
+  <div class="flash welcome">
+    When the queue runs dry, either overlay can show a card inviting viewers to
+    request something instead of sitting empty — and it is replaced by the real
+    queue the moment a request lands. Turn it on per overlay with the
+    <em>Show the empty-queue card</em> boxes above; the content here is shared
+    by both. Tick <em>Preview the empty-queue card</em> under either preview to
+    see it without emptying your live queue.
+  </div>
+
+  <form method="post" action="{{ url_for('save_overlay_promo_settings') }}" class="form">
+    <fieldset>
+      <legend>Message</legend>
+      <label>Headline
+        <input type="text" name="text" value="{{ promo.text }}" maxlength="60"></label>
+      <label>Second line (optional)
+        <input type="text" name="subtext" value="{{ promo.subtext }}" maxlength="80"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Image</legend>
+      <label>Image shown in place of the artwork
+        <span class="path-row">
+          <input type="text" name="image" value="{{ promo.image }}"
+                 placeholder="{{ 'Leave blank for your channel avatar' if has_avatar else 'Leave blank for your fallback image' }}">
+          <button type="button" class="secondary browse-btn" data-target="image"
+                  data-kind="open" data-filetypes="Images:*.png *.jpg *.jpeg;All files:*.*">Browse…</button>
+        </span></label>
+      {% if not has_avatar %}
+      <p class="muted">No channel avatar is available from StreamerSonglist
+        right now, so leaving this blank falls back to your fallback image.</p>
+      {% endif %}
+    </fieldset>
+
+    <fieldset>
+      <legend>When requests are closed</legend>
+      <p class="muted">StreamerSonglist tells the dashboard whether you are
+        taking requests, so the card can say something different when you are
+        not — useful before you go live, too. Leave the headline blank to show
+        nothing at all while requests are closed.</p>
+      <label>Headline
+        <input type="text" name="closed_text" value="{{ promo.closed_text }}"
+               maxlength="60" placeholder="e.g. Requests open at 8pm"></label>
+      <label>Second line (optional)
+        <input type="text" name="closed_subtext" value="{{ promo.closed_subtext }}"
+               maxlength="80"></label>
+      <label>Image
+        <span class="path-row">
+          <input type="text" name="closed_image" value="{{ promo.closed_image }}"
+                 placeholder="Leave blank to reuse the image above">
+          <button type="button" class="secondary browse-btn" data-target="closed_image"
+                  data-kind="open" data-filetypes="Images:*.png *.jpg *.jpeg;All files:*.*">Browse…</button>
+        </span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Timing</legend>
+      <label>Show once the queue has been empty for (seconds)
+        <input type="number" name="delay_seconds" value="{{ promo.delay_seconds }}"
+               min="0" max="300"></label>
+      <p class="muted">A few seconds' delay keeps the card from flashing up in
+        the gap between one song ending and the next being promoted.</p>
+    </fieldset>
+
+    <button type="submit" class="primary">Save empty-queue card</button>
+  </form>
+</div>
+
 <script>
+document.querySelectorAll('.promo-demo').forEach(sel => {
+  sel.addEventListener('change', () => {
+    const frame = document.getElementById(sel.dataset.frame);
+    // promo=1 as well, so the card can be styled before that overlay's own
+    // checkbox is ticked; promo_demo pins the state and skips the empty-for
+    // delay, so neither preview waits on your real queue.
+    frame.src = frame.src.split('?')[0]
+      + (sel.value ? '?promo_demo=' + sel.value + '&promo=1' : '');
+  });
+});
+
 document.querySelectorAll('.copy-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const input = document.getElementById(btn.dataset.copy);

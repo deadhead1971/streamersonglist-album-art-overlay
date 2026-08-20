@@ -50,6 +50,12 @@
   .artist { opacity: .85; font-size: .85em; }
   .requester { opacity: .7; font-size: .75em; font-style: italic; }
 
+  /* Empty-queue promo. Its text is a sentence, not a song title, so it wraps
+     instead of ellipsizing — capped so it breaks at a sane width rather than
+     running the full width of the browser source. */
+  .row.promo .title, .row.promo .artist { white-space: normal; overflow: visible; }
+  .row.promo .meta { max-width: 18em; }
+
   /* Presets */
   body.p-dark .row { background: rgba(12,12,16,.82); color: #f2f2f2;
                      box-shadow: 0 2px 8px rgba(0,0,0,.35); }
@@ -94,7 +100,19 @@
     return { exit: 400 * f, move: 400 * f, enter: 300 * f, stagger: 60 * f };
   }
 
+  // The promo card borrows the row chrome but none of the song fields: no
+  // position number, and its two lines are not the per-field toggles' to hide.
+  function promoHtml(item, o) {
+    let h = "";
+    if (o.show_artwork)
+      h += `<img class="art" src="${esc(item.art)}" width="${o.art_size}" height="${o.art_size}" alt="">`;
+    let meta = `<div class="title" style="color:${esc(o.accent)}">${esc(item.title)}</div>`;
+    if (item.artist) meta += `<div class="artist">${esc(item.artist)}</div>`;
+    return h + `<div class="meta">${meta}</div>`;
+  }
+
   function rowHtml(item, o) {
+    if (item.promo) return promoHtml(item, o);
     let h = "";
     if (o.show_position)
       h += `<div class="pos" style="color:${esc(o.accent)}">${item.position}</div>`;
@@ -178,7 +196,7 @@
         let el = rows.get(k);
         if (!el) {
           el = document.createElement("div");
-          el.className = "row pre-enter";
+          el.className = "row pre-enter" + (it.promo ? " promo" : "");
           el.innerHTML = rowHtml(it, o);
           rows.set(k, el);
         }

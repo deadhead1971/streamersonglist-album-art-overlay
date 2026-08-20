@@ -16,6 +16,10 @@
   "lastfm_api_key": "",
   "image_size": 640,
   "runtime_service": true,
+  "updates": {
+    "check_enabled": true,
+    "skipped_version": ""
+  },
   "overlay": {
     "max_songs": 5,
     "include_current": true,
@@ -24,6 +28,7 @@
     "show_artist": true,
     "show_requester": true,
     "show_position": true,
+    "show_promo": false,
     "preset": "dark",
     "font_size": 20,
     "art_size": 56,
@@ -31,6 +36,15 @@
     "accent": "#4da3ff",
     "animation": "slide",
     "anim_speed": "normal"
+  },
+  "promo": {
+    "text": "Requests are open!",
+    "subtext": "Type !songlist to see what I can play",
+    "image": "",
+    "delay_seconds": 8,
+    "closed_text": "",
+    "closed_subtext": "",
+    "closed_image": ""
   },
   "reflection": {
     "enabled": true,

@@ -71,6 +71,14 @@ DEFAULT_CONFIG = {
     # Start the in-process runtime service (queue poller + PNG writer) when the
     # dashboard launches. Disable only if you never use the live outputs.
     "runtime_service": True,
+    # Update check. Once per dashboard launch the app asks GitHub for the
+    # latest release and shows a banner if it is newer than __version__. It is
+    # an anonymous GET to api.github.com that sends nothing but the User-Agent.
+    #   skipped_version  a release the user dismissed; a newer one still shows
+    "updates": {
+        "check_enabled": True,
+        "skipped_version": "",
+    },
     # Queue overlay (OBS browser source at /overlay/queue).
     "overlay": {
         "max_songs": 5,
@@ -80,6 +88,9 @@ DEFAULT_CONFIG = {
         "show_artist": True,
         "show_requester": True,
         "show_position": True,
+        # Show the empty-queue promo card (content in the "promo" section)
+        # when this overlay has nothing else to render.
+        "show_promo": False,
         "preset": "dark",        # dark | light | minimal | glass
         "font_size": 20,         # px, base text size
         "art_size": 56,          # px, artwork thumbnail square
@@ -104,6 +115,26 @@ DEFAULT_CONFIG = {
         "animation": "fade",     # slide | fade | none — on song change
         "anim_speed": "normal",  # normal | fast
         "hide_when_empty": True, # hide the card when the queue is empty
+        "show_promo": False,     # ...unless the promo card is on, which wins
+    },
+    # Empty-queue promo: a card inviting viewers to request something, shown by
+    # either overlay (see their "show_promo" flags) once the queue has been
+    # empty for delay_seconds. The content is shared so the same message does
+    # not have to be maintained in two places.
+    "promo": {
+        "text": "Requests are open!",
+        "subtext": "Type !songlist to see what I can play",
+        # Blank = the streamer's SSL avatar, falling back to fallback_image.
+        "image": "",
+        # Seconds the queue must stay empty first. Stops the card flashing in
+        # the gap between one song ending and the next being promoted.
+        "delay_seconds": 8,
+        # Shown instead when the streamer is not accepting requests (SSL's
+        # requestsActive switch). Blank text = show nothing while closed;
+        # blank image = reuse the image above.
+        "closed_text": "",
+        "closed_subtext": "",
+        "closed_image": "",
     },
     "reflection": {
         "enabled": True,

@@ -85,6 +85,16 @@
   .requester { opacity: .65; font-size: .6em; font-style: italic; margin-top: .35em; }
   .title.placeholder { opacity: .6; font-style: italic; }
 
+  /* Empty-queue promo: a sentence rather than a song title, so it wraps
+     instead of ellipsizing, capped so a wide source does not stretch it into
+     one long line. */
+  .card.promo .title, .card.promo .artist { white-space: normal; overflow: visible; }
+  .card.promo .meta { max-width: 16em; }
+  /* A song card in vertical layout is pinned to the artwork width. The promo
+     sizes to its text instead — wrapped into a 160px column a sentence is
+     unreadable — and the art centres itself above it. */
+  body.l-vertical .card.promo { width: auto; min-width: var(--art); }
+
   /* Presets */
   body.p-dark .card { background: rgba(12,12,16,.82); color: #f2f2f2;
                       box-shadow: 0 2px 8px rgba(0,0,0,.35); }
@@ -133,7 +143,19 @@
     return { exit: 400 * f, enter: 400 * f };
   }
 
+  // The promo card keeps the card chrome but not the song fields — see the
+  // queue overlay for the same reasoning.
+  function promoHtml(item, o) {
+    let h = "";
+    if (o.show_artwork)
+      h += `<img class="art" src="${esc(item.art)}" width="${o.art_size}" height="${o.art_size}" alt="">`;
+    let meta = `<div class="title" style="color:${esc(o.accent)}">${esc(item.title)}</div>`;
+    if (item.artist) meta += `<div class="artist">${esc(item.artist)}</div>`;
+    return h + `<div class="meta">${meta}</div>`;
+  }
+
   function cardHtml(item, o) {
+    if (item && item.promo) return promoHtml(item, o);
     let h = "";
     if (o.show_artwork) {
       const src = item ? item.art : "/overlay/fallback.png";
@@ -177,7 +199,7 @@
 
   async function showCard(item, o, d) {
     const el = document.createElement("div");
-    el.className = "card pre-enter";
+    el.className = "card pre-enter" + (item && item.promo ? " promo" : "");
     el.innerHTML = cardHtml(item, o);
     stage.appendChild(el);
     cardEl = el;

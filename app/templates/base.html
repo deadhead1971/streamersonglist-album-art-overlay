@@ -43,8 +43,71 @@
   pollRuntimeStatus();
   </script>
   <main>
+    <!-- Update banner. Lives in base.html so every dashboard page shows it —
+         and note the overlay pages do NOT extend this template, so it can never
+         appear in an OBS browser source. -->
+    <div id="update-banner" class="update-banner" hidden>
+      <span class="update-arrow">⬆</span>
+      <div class="update-body">
+        <strong><span id="update-latest"></span> available</strong><span id="update-name"></span>
+        <div class="small">
+          You're on v{{ app_version }} ·
+          <a id="update-link" href="#" target="_blank" rel="noopener">What's new ↗</a>
+        </div>
+      </div>
+      <button type="button" id="update-dismiss" title="Dismiss until the next release">✕</button>
+    </div>
+    <script>
+    (async function updateBanner(retry = true) {
+      let d;
+      try { d = await (await fetch('{{ url_for("api_update") }}')).json(); }
+      catch (e) { return; }  // offline or firewalled — say nothing
+      if (!d.checked && retry) {
+        // The launch-time check may still be in flight; the browser opens about a
+        // second after startup. One more look, then leave it for the next page load.
+        return setTimeout(() => updateBanner(false), 4000);
+      }
+      if (!d.update_available) return;
+      document.getElementById('update-latest').textContent = d.latest;
+      document.getElementById('update-name').textContent = d.name ? ` — ${d.name}` : '';
+      document.getElementById('update-link').href = d.url;
+      const banner = document.getElementById('update-banner');
+      banner.hidden = false;
+      document.getElementById('update-dismiss').addEventListener('click', async () => {
+        banner.hidden = true;
+        await fetch('{{ url_for("api_update_skip") }}', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({version: d.latest})
+        });
+      });
+    })();
+    </script>
     {% block content %}{% endblock %}
   </main>
+  <script>
+  // Native file dialog for any [data-target] path field. Lives here rather
+  // than on one page because both Settings and Overlay have path fields —
+  // and after <main>, so the buttons exist by the time this runs.
+  document.querySelectorAll('.browse-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const input = document.querySelector(`[name=${btn.dataset.target}]`);
+      btn.disabled = true;
+      try {
+        const r = await fetch('{{ url_for("api_browse") }}', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            kind: btn.dataset.kind,
+            initialfile: btn.dataset.initialfile || '',
+            filetypes: btn.dataset.filetypes || ''
+          })
+        });
+        const d = await r.json();
+        if (d.ok && d.path) input.value = d.path.replace(/\//g, '\\');
+      } catch (e) { /* dialog cancelled or failed — leave the field as is */ }
+      btn.disabled = false;
+    });
+  });
+  </script>
   <footer class="kofi-footer">
     <span>Enjoying Album Art Overlay? Fuel the next update —</span>
     <a class="kofi-button" href="https://ko-fi.com/alanthompson_music" target="_blank" rel="noopener">

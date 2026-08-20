@@ -49,6 +49,17 @@ IDLE_INTERVAL = 60.0
 # each one must not turn into its own REST call.
 MIN_TICK_GAP = 1.0
 
+# Guard rail between two requests open/closed checks. Deliberately below the
+# tick interval: the tick is what paces this, not the floor — the floor only
+# stops a burst of ticks turning into a burst of REST calls.
+REQUESTS_CHECK_INTERVAL = 5.0
+
+
+def promo_enabled(cfg: dict) -> bool:
+    """Whether either overlay is set to show the empty-queue card."""
+    return bool(cfg.get("overlay", {}).get("show_promo")
+                or cfg.get("overlay_current", {}).get("show_promo"))
+
 
 class RuntimeService:
     def __init__(self):
@@ -66,6 +77,9 @@ class RuntimeService:
         self._playing = None      # raw now-playing item, or None
         self._queue = []          # raw UPCOMING queue items, top-first
         self._queue_at = 0.0      # monotonic time of last successful poll
+        self._empty_since = None  # monotonic time the queue went empty, or None
+        self._requests_active = None  # True/False, or None = never read
+        self._requests_at = 0.0   # monotonic time of last requests-open check
         self._current = None      # (title, artist) playing right now, or None
         self._error = None        # last poll error message, or None
 
@@ -127,6 +141,27 @@ class RuntimeService:
                 "events": self._events.state(),
             }
 
+    def empty_for(self):
+        """
+        Seconds the queue has been continuously empty (nothing playing and
+        nothing upcoming), or None if it is not empty — or if no poll has
+        landed yet, since "we have not looked" is not "there is nothing there".
+        Drives the empty-queue promo card's delay.
+        """
+        with self._lock:
+            if self._empty_since is None:
+                return None
+            return time.monotonic() - self._empty_since
+
+    def requests_active(self):
+        """
+        True/False from the last requests open/closed check, or None if one has
+        never succeeded (v1 backend, no username, or every attempt failed).
+        None means "assume open" to callers — see dashboard._promo_item.
+        """
+        with self._lock:
+            return self._requests_active
+
     def get_queue(self, cfg: dict, max_age: float = 15.0):
         """
         Return ``(playing, upcoming)`` from cache if fresh enough; otherwise
@@ -149,13 +184,51 @@ class RuntimeService:
             log.warning("Overlay queue fetch failed: %s", e)
             with self._lock:
                 return self._playing, list(self._queue)
+        self._store_queue(playing, upcoming)
+        return playing, list(upcoming)
+
+    # -- internals ------------------------------------------------------------
+
+    def _store_queue(self, playing, upcoming):
+        """
+        Cache a freshly fetched queue. The single write path for it, so the
+        empty-since clock can never disagree with what the overlays are being
+        shown — the tick and get_queue's inline fetch both land here.
+        """
         with self._lock:
             self._playing = playing
             self._queue = upcoming
             self._queue_at = time.monotonic()
-            return playing, list(upcoming)
+            if playing is not None or upcoming:
+                self._empty_since = None
+            elif self._empty_since is None:
+                self._empty_since = time.monotonic()
 
-    # -- internals ------------------------------------------------------------
+    def _refresh_requests_active(self, cfg: dict):
+        """
+        Re-read SSL's requests open/closed switch, rate-floored.
+
+        A failed read keeps the last answer rather than clearing it: a blip
+        should not flip the overlay between its open and closed cards, and an
+        answer we have never had is what "assume open" is for.
+        """
+        with self._lock:
+            if self._requests_at and (time.monotonic() - self._requests_at
+                                      < REQUESTS_CHECK_INTERVAL):
+                return
+        try:
+            value = songlist.fetch_requests_active(
+                cfg.get("streamersonglist_username"), cfg=cfg)
+        except requests.RequestException as e:
+            log.debug("Requests open/closed check failed (%s) — keeping the "
+                      "last answer", e)
+            return
+        with self._lock:
+            if value != self._requests_active:
+                log.info("StreamerSonglist requests are now %s",
+                         {True: "open", False: "closed"}.get(value, "unknown"))
+            self._requests_active = value
+            self._requests_at = time.monotonic()
 
     def _resolve_id(self, cfg: dict):
         username = cfg.get("streamersonglist_username")
@@ -223,7 +296,15 @@ class RuntimeService:
                 # Dropped: the wait silently returns to plain polling.
                 # File mode never stretches — the song file is read on this
                 # timer and no queue event announces a change to it.
-                relaxed = self._events.is_connected() and not file_mode
+                # An empty queue with the promo on is the one idle state that
+                # still needs a brisk tick: the requests open/closed switch is
+                # read on this tick, and closing the songlist should reach the
+                # overlay in seconds rather than the best part of a minute.
+                # Nothing else is happening then, so the polling costs little.
+                watching_requests = (promo_enabled(cfg)
+                                     and self.empty_for() is not None)
+                relaxed = (self._events.is_connected() and not file_mode
+                           and not watching_requests)
                 wait_for = (IDLE_INTERVAL if relaxed else interval) + backoff
                 self._wake.wait(timeout=wait_for)
                 if self._stop.is_set():
@@ -269,11 +350,15 @@ class RuntimeService:
                     # The now-playing slot is the current song; the top of the
                     # upcoming queue is only a fallback for when it's empty.
                     result = songlist.current_from_queue(playing, upcoming)
+                    self._store_queue(playing, upcoming)
                     with self._lock:
-                        self._playing = playing
-                        self._queue = upcoming
-                        self._queue_at = time.monotonic()
                         self._error = None
+
+                # Which card the promo shows depends on the requests switch,
+                # and that only matters while there is nothing queued — so it
+                # is read here and nowhere else.
+                if promo_enabled(cfg) and self.empty_for() is not None:
+                    self._refresh_requests_active(cfg)
 
             if file_mode:
                 result = artwork.read_song_file(cfg.get("song_file"), quiet=True)
