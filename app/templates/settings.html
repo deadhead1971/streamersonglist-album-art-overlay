@@ -164,26 +164,6 @@ document.querySelectorAll('[name=song_source]').forEach(el => {
 });
 updateSongFileVisibility();
 
-document.querySelectorAll('.browse-btn').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const input = document.querySelector(`[name=${btn.dataset.target}]`);
-    btn.disabled = true;
-    try {
-      const r = await fetch('{{ url_for("api_browse") }}', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          kind: btn.dataset.kind,
-          initialfile: btn.dataset.initialfile || '',
-          filetypes: btn.dataset.filetypes || ''
-        })
-      });
-      const d = await r.json();
-      if (d.ok && d.path) input.value = d.path.replace(/\//g, '\\');
-    } catch (e) { /* dialog cancelled or failed — leave the field as is */ }
-    btn.disabled = false;
-  });
-});
-
 document.getElementById('test-btn').addEventListener('click', async () => {
   const el = document.getElementById('test-result');
   const avatar = document.getElementById('test-avatar');

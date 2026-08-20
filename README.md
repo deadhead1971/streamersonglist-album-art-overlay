@@ -154,6 +154,25 @@ Lookup order for each song:
 After a stream, open the dashboard's **Queue** page to review anything that was
 grabbed live and confirm or replace it.
 
+### When the queue is empty
+
+Rather than sitting empty between requests, either overlay can show a card
+inviting viewers to request something — your own message, with your channel
+avatar (or any image you pick) in place of the album art. It is off by default:
+tick **Show the empty-queue card** on the Overlay page for whichever overlays
+you want it on, and write the message under **Empty-queue card**.
+
+The card appears once the queue has been empty for a few seconds — so it does
+not flash up between songs — and is replaced by the real queue the moment a
+request lands.
+
+It also knows whether you are **taking requests**. When your songlist is closed
+it switches to a second message you set separately (*"Requests open at 8pm"*),
+which covers the pre-stream window too — or shows nothing at all, if you leave
+that message blank. Use the **Preview the empty-queue card** dropdown under
+either preview to see both states without touching your live queue or your
+request settings.
+
 ## 7. Your artwork library
 
 Images live in the `library/` folder, named `Artist - Title.png`, at full

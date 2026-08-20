@@ -45,6 +45,30 @@
   <main>
     {% block content %}{% endblock %}
   </main>
+  <script>
+  // Native file dialog for any [data-target] path field. Lives here rather
+  // than on one page because both Settings and Overlay have path fields —
+  // and after <main>, so the buttons exist by the time this runs.
+  document.querySelectorAll('.browse-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const input = document.querySelector(`[name=${btn.dataset.target}]`);
+      btn.disabled = true;
+      try {
+        const r = await fetch('{{ url_for("api_browse") }}', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            kind: btn.dataset.kind,
+            initialfile: btn.dataset.initialfile || '',
+            filetypes: btn.dataset.filetypes || ''
+          })
+        });
+        const d = await r.json();
+        if (d.ok && d.path) input.value = d.path.replace(/\//g, '\\');
+      } catch (e) { /* dialog cancelled or failed — leave the field as is */ }
+      btn.disabled = false;
+    });
+  });
+  </script>
   <footer class="kofi-footer">
     <span>Enjoying Album Art Overlay? Fuel the next update —</span>
     <a class="kofi-button" href="https://ko-fi.com/alanthompson_music" target="_blank" rel="noopener">
