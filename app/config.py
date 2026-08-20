@@ -71,6 +71,14 @@ DEFAULT_CONFIG = {
     # Start the in-process runtime service (queue poller + PNG writer) when the
     # dashboard launches. Disable only if you never use the live outputs.
     "runtime_service": True,
+    # Update check. Once per dashboard launch the app asks GitHub for the
+    # latest release and shows a banner if it is newer than __version__. It is
+    # an anonymous GET to api.github.com that sends nothing but the User-Agent.
+    #   skipped_version  a release the user dismissed; a newer one still shows
+    "updates": {
+        "check_enabled": True,
+        "skipped_version": "",
+    },
     # Queue overlay (OBS browser source at /overlay/queue).
     "overlay": {
         "max_songs": 5,

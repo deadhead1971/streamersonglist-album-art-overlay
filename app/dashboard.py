@@ -23,7 +23,7 @@ from flask import (
 )
 from PIL import Image
 
-from . import artwork, config, runtime, songlist
+from . import __version__, artwork, config, runtime, songlist, updates
 from .library import (
     Library, STATUS_PROPOSED, STATUS_UNVERIFIED,
     normalize_key,
@@ -32,6 +32,13 @@ from .library import (
 log = logging.getLogger("artwork_fetcher")
 
 app = Flask(__name__)
+
+
+@app.context_processor
+def inject_version():
+    """Every page footer/banner can show which version is running."""
+    return {"app_version": __version__}
+
 
 # Snapshot of the last fetched songlist (for the songs table). Lives beside the
 # manifest so a removed-from-SSL song can still be shown/filtered.
@@ -261,6 +268,7 @@ def settings_page():
                            platforms=_PLATFORMS,
                            token_set=bool((cfg.get("api_token") or "").strip()),
                            token_mask=TOKEN_MASK,
+                           update=updates.state(cfg),
                            needs_setup=not cfg.get("streamersonglist_username"))
 
 
@@ -311,6 +319,10 @@ def save_settings():
             ref[fld] = cast(form.get(f"reflection_{fld}", ref.get(fld)))
         except (ValueError, TypeError):
             pass
+
+    cfg.setdefault("updates", {})["check_enabled"] = (
+        form.get("updates_check_enabled") == "on"
+    )
 
     config.save_config(cfg)
     # Host/token/platform may have changed — re-probe which API is live.
@@ -579,6 +591,40 @@ def serve_image():
     if not path or not path.exists():
         return "no image", 404
     return send_file(path, mimetype="image/png")
+
+
+# ---------------------------------------------------------------------------
+# Update check
+# ---------------------------------------------------------------------------
+
+@app.route("/api/update")
+def api_update():
+    """Cached answer only — a page load must never wait on GitHub."""
+    return jsonify(updates.state(config.load_config()))
+
+
+@app.route("/api/update/check", methods=["POST"])
+def api_update_check():
+    """
+    Force a fresh check ("Check now" on Settings). This is the one path that
+    surfaces errors, because here the user asked for the answer.
+    """
+    updates.check()
+    return jsonify(updates.state(config.load_config()))
+
+
+@app.route("/api/update/skip", methods=["POST"])
+def api_update_skip():
+    """
+    Dismiss the current release. Persisted, so it stays dismissed across
+    restarts — but only for this version, so the next release still shows.
+    Posting with no version clears the dismissal instead.
+    """
+    cfg = config.load_config()
+    version = (request.json or {}).get("version", "") if request.is_json else ""
+    cfg.setdefault("updates", {})["skipped_version"] = str(version).strip()
+    config.save_config(cfg)
+    return jsonify(updates.state(cfg))
 
 
 # ---------------------------------------------------------------------------
@@ -1068,6 +1114,7 @@ def run(host="127.0.0.1", port=5050, open_browser=True):
 
     first_run = config.ensure_config()
     cfg = config.load_config()
+    updates.start_background_check(cfg)
     if _runtime_wanted(cfg):
         runtime.service.start(cfg)
     if open_browser:

@@ -16,6 +16,10 @@
   "lastfm_api_key": "",
   "image_size": 640,
   "runtime_service": true,
+  "updates": {
+    "check_enabled": true,
+    "skipped_version": ""
+  },
   "overlay": {
     "max_songs": 5,
     "include_current": true,
