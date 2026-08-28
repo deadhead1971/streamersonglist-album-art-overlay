@@ -99,7 +99,14 @@ document.getElementById('sync-btn').addEventListener('click', async () => {
   statusEl.textContent = d.ok
     ? `Synced ${d.total} songs (${d.added} new).`
     : `Sync failed: ${d.error}`;
-  if (d.ok) loadRows();
+  if (!d.ok) return;
+  loadRows();
+  // The sync starts a propose run over the songs it just added — show it.
+  if (d.proposing) {
+    document.getElementById('stop-btn').hidden = false;
+    document.getElementById('progress').hidden = false;
+    pollProgress();
+  }
 });
 
 let pollTimer = null;
@@ -115,6 +122,7 @@ document.getElementById('stop-btn').addEventListener('click', async () => {
 });
 
 async function pollProgress() {
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   const r = await fetch('{{ url_for("api_propose_status") }}');
   const s = await r.json();
   const pct = s.total ? Math.round(100 * s.done / s.total) : 0;

@@ -58,11 +58,12 @@ TOKEN_MASK = "•" * 12
 # Songlist sync
 # ---------------------------------------------------------------------------
 
-def merge_songlist(lib: Library, songs: list) -> int:
+def merge_songlist(lib: Library, songs: list) -> list:
     """
     Ensure a manifest entry per fetched song and flag which songs are currently
     in the songlist (removed songs keep their entry with in_songlist=False).
-    Returns the number of brand-new entries created.
+    Returns the keys of the brand-new entries created, so the caller can send
+    just those to the propose job.
     """
     present_keys = set()
     for song in songs:
@@ -70,7 +71,7 @@ def merge_songlist(lib: Library, songs: list) -> int:
         artist = song.get("artist", "")
         present_keys.add(normalize_key(title, artist))
 
-    added = 0
+    added = []
     for key, entry in lib.all_entries().items():
         entry["in_songlist"] = key in present_keys
 
@@ -83,7 +84,7 @@ def merge_songlist(lib: Library, songs: list) -> int:
         entry["in_songlist"] = True
         entry["active"] = song.get("active", True)
         if not existed:
-            added += 1
+            added.append(key)
         elif entry["title"] != title or entry["artist"] != artist:
             # Same normalised key but the SSL spelling changed (case, accents,
             # punctuation, bracketed parts). Adopt the new spelling — searches
@@ -146,7 +147,12 @@ class ProposeJob:
                 "current": self.current,
             }
 
-    def start(self, cfg: dict) -> bool:
+    def start(self, cfg: dict, keys: list = None) -> bool:
+        """
+        Start a run. ``keys`` limits it to those manifest keys (a sync passes
+        the songs it just added); None means every un-proposed song in the
+        songlist, which is what the Find artwork button asks for.
+        """
         with self.lock:
             if self.running:
                 return False
@@ -155,7 +161,8 @@ class ProposeJob:
             self.done = 0
             self.found = 0
             self.current = ""
-        self.thread = threading.Thread(target=self._run, args=(cfg,), daemon=True)
+        self.thread = threading.Thread(target=self._run, args=(cfg, keys),
+                                       daemon=True)
         self.thread.start()
         return True
 
@@ -163,12 +170,16 @@ class ProposeJob:
         with self.lock:
             self.stop_flag = True
 
-    def _run(self, cfg: dict):
+    def _run(self, cfg: dict, keys: list = None):
         # Fresh Library instance for the worker thread.
         lib = Library()
+        candidates = (
+            lib.all_entries().items() if keys is None
+            else [(k, lib.get_by_key(k)) for k in keys]
+        )
         targets = [
-            key for key, e in lib.all_entries().items()
-            if e.get("in_songlist") and not e.get("status")
+            key for key, e in candidates
+            if e and e.get("in_songlist") and not e.get("status")
         ]
         with self.lock:
             self.total = len(targets)
@@ -460,7 +471,13 @@ def api_sync():
 
     lib = Library()
     added = merge_songlist(lib, songs)
-    return jsonify({"ok": True, "total": len(songs), "added": added})
+    # A newly added song is created empty and only the propose flow fills it in,
+    # so without this it would sit invisible to the review queue until someone
+    # thought to press Find artwork. Scoped to the new keys: a sync never
+    # re-sweeps the whole library behind the user's back.
+    proposing = bool(added) and propose_job.start(cfg, keys=added)
+    return jsonify({"ok": True, "total": len(songs), "added": len(added),
+                    "proposing": proposing})
 
 
 @app.route("/api/entries")
@@ -543,6 +560,25 @@ def api_more():
         return jsonify({"ok": False, "error": "not found"}), 404
     added = artwork.find_more_candidates(lib, cfg, entry)
     return jsonify({"ok": True, "added": added, **entry_view(lib, key, entry)})
+
+
+@app.route("/api/propose/one", methods=["POST"])
+def api_propose_one():
+    """
+    Search + adopt artwork for one song that has never been through the propose
+    flow. The review card calls this on arrival, so a song opened straight from
+    the songs list (or one the sync's propose run hasn't reached yet) shows art
+    instead of an empty card. A no-op for an entry that already has a status or
+    an image, so it is safe to call on every card.
+    """
+    lib = Library()
+    cfg = config.load_config()
+    key = (request.json or {}).get("key", "")
+    entry = lib.get_by_key(key)
+    if entry is None:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    artwork.ensure_proposal(lib, cfg, entry)
+    return jsonify({"ok": True, **entry_view(lib, key, entry)})
 
 
 @app.route("/api/upload", methods=["POST"])
