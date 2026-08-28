@@ -100,6 +100,12 @@ table.songs th { color: var(--muted); font-weight: 600; font-size: 13px; }
 .badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
 .badge { background: var(--accent2); color: #fff; padding: 4px 10px; border-radius: 20px; font-size: 12px; }
 .badge.subtle { background: var(--panel2); color: var(--muted); }
+/* the entry's own review state, kept visually apart from the candidate badges */
+.badge[class*="status-"] { background: var(--panel2); color: var(--text);
+  border: 1px solid var(--line); }
+.badge.status-confirmed { border-color: var(--ok); }
+.badge.status-proposed, .badge.status-unverified { border-color: var(--warn); }
+.badge.status-rejected_all { border-color: var(--err); }
 .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
 .upload { display: inline-flex; align-items: center; }
 .dropzone { border: 2px dashed var(--line); border-radius: 10px; padding: 18px;

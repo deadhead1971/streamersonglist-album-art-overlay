@@ -23,6 +23,7 @@
         <h2 id="song-title"></h2>
         <div id="song-artist" class="muted big"></div>
         <div class="badges">
+          <span id="badge-status" class="badge"></span>
           <span id="badge-source" class="badge"></span>
           <span id="badge-album" class="badge subtle"></span>
           <span id="badge-sim" class="badge subtle"></span>
@@ -60,6 +61,12 @@ let queue = [];
 let pos = 0;
 let current = null;
 let busy = false;
+
+const STATUS_LABEL = {
+  confirmed: '✅ confirmed', proposed: '🟡 needs review',
+  unverified: '🔵 grabbed live', rejected_all: '⛔ no art',
+  null: '— not searched'
+};
 
 const $ = id => document.getElementById(id);
 const esc = s => (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -120,13 +127,20 @@ function paint() {
     art.src = current.image_url; art.hidden = false; noArt.hidden = true;
   } else { art.hidden = true; noArt.hidden = false; }
 
+  const st = current.status;
+  $('badge-status').textContent = STATUS_LABEL[st] || STATUS_LABEL.null;
+  $('badge-status').className = 'badge status-' + (st || 'none');
   $('badge-source').textContent = current.candidate_source || current.source || 'no source';
   $('badge-album').textContent = current.candidate_album ? `album: ${current.candidate_album}` : '';
   $('badge-album').hidden = !current.candidate_album;
   $('badge-sim').textContent = current.similarity != null
     ? `artist match ${Math.round(current.similarity * 100)}%` : '';
   $('badge-sim').hidden = current.similarity == null;
-  $('btn-confirm').disabled = !current.has_image;
+  // Already-confirmed songs are reachable from the songs list; the card used to
+  // look identical to an unreviewed one, so a confirmed pick read as pending.
+  const done = current.has_image && st === 'confirmed';
+  $('btn-confirm').disabled = !current.has_image || done;
+  $('btn-confirm').innerHTML = done ? 'Confirmed ✓' : 'Confirm <kbd>Y</kbd>';
 
   $('btn-more').disabled = current.sources_exhausted;
   $('btn-more').textContent = current.sources_exhausted ? 'No more sources' : 'Find more';
@@ -203,10 +217,20 @@ async function upload(file) {
   const fd = new FormData();
   fd.append('key', current.key);
   fd.append('file', file);
+  const key = current.key;
+  busy = true;
   $('msg').textContent = 'Uploading…';
   const r = await fetch('{{ url_for("api_upload") }}', {method: 'POST', body: fd});
   const d = await r.json();
-  if (d.ok) next(); else $('msg').textContent = 'Upload failed: ' + d.error;
+  busy = false;
+  $('file').value = '';   // so re-picking the same file fires change again
+  if (!d.ok) { $('msg').textContent = 'Upload failed: ' + d.error; return; }
+  if (queue[pos] !== key) return;   // skipped on while it was uploading
+  // Show what was uploaded and wait for Confirm - jumping straight to the next
+  // song hid the result and left the song looking reviewed when it wasn't.
+  current = d;
+  paint();
+  $('msg').textContent = 'Uploaded — press Confirm to keep it.';
 }
 
 const dz = $('dropzone');
@@ -214,7 +238,12 @@ const dz = $('dropzone');
   e.preventDefault(); dz.classList.add('over'); }));
 ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => {
   e.preventDefault(); dz.classList.remove('over'); }));
-dz.addEventListener('drop', e => { if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]); });
+dz.addEventListener('drop', e => {
+  const file = e.dataTransfer.files[0];
+  if (file) upload(file);
+  else $('msg').textContent = 'That drop had no image file in it — save the '
+    + 'picture to your computer first, then drag the saved file in.';
+});
 
 // Browse candidates with the arrow keys, pick with Enter/Y.
 function step(delta) {

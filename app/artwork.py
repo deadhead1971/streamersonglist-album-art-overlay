@@ -399,11 +399,24 @@ def confirm_entry(lib, entry: dict) -> None:
 
 
 def store_upload(lib, entry: dict, raw_bytes: bytes) -> None:
-    """Store a user-uploaded image (any format → PNG) as a confirmed manual entry."""
+    """
+    Store a user-uploaded image (any format → PNG) as the entry's manual artwork.
+
+    An upload picks the image; it does not accept it. Confirming stays the
+    user's explicit act (the review card repaints with the upload and waits on
+    Confirm), because marking it confirmed here dropped the song straight out of
+    the review queue — the user never saw what they had just uploaded, and the
+    song then read as "done" everywhere while nobody had looked at it.
+
+    An unverified live grab keeps that status so an upload never shuffles a song
+    between the two review lists; everything else lands on proposed.
+    """
     png = imaging.to_png_bytes(raw_bytes)
     fname = lib.save_image_bytes(entry["title"], entry["artist"], png)
     entry["file"] = fname
     entry["source"] = "manual"
     entry["candidate_index"] = -1  # a manual upload isn't one of the candidates
-    lib.set_status(entry, STATUS_CONFIRMED)
+    status = (STATUS_UNVERIFIED if entry.get("status") == STATUS_UNVERIFIED
+              else STATUS_PROPOSED)
+    lib.set_status(entry, status)
     lib.save()
