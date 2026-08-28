@@ -101,10 +101,13 @@ Double-click **`run_dashboard.bat`** (or run `python -m app.dashboard`).
 On the **Songs** page:
 
 1. **Sync songlist** — pulls all your songs from StreamerSonglist.
-2. **Bulk propose artwork** — searches iTunes for every song without art. This is
+2. **Find artwork** — searches iTunes for every song without art. This is
    throttled (about 3 seconds per song, to respect iTunes' rate limit), so a large
    list takes a while. You can watch the progress bar, and it's **resumable** — if
    you stop and start again it picks up where it left off.
+   Songs you add to StreamerSonglist later don't need this button: a **Sync
+   songlist** searches the new songs on its own, so they turn up on the Review
+   page with artwork ready to approve.
 3. Go to the **Review** page to approve artwork one song at a time:
    - **Confirm** (`Y`) — keep this image.
    - **Reject → next** (`N`) — try the next candidate (more iTunes results, then

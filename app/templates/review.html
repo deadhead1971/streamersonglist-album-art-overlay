@@ -10,7 +10,7 @@
 
   <div id="empty" class="empty-state" hidden>
     <p>Nothing to review here. 🎉</p>
-    <p class="muted">Sync your songlist and run <strong>Bulk propose</strong> on the Songs page.</p>
+    <p class="muted">Sync your songlist and run <strong>Find artwork</strong> on the Songs page.</p>
   </div>
 
   <div id="card" hidden>
@@ -83,7 +83,7 @@ function showEmpty() {
   $('empty').innerHTML = SINGLE_KEY
     ? '<p>Done. ✓</p><p class="muted"><a href="{{ url_for("songs_page") }}">← Back to the song list</a></p>'
     : '<p>Nothing to review here. 🎉</p><p class="muted">Sync your songlist and run '
-      + '<strong>Bulk propose</strong> on the Songs page.</p>';
+      + '<strong>Find artwork</strong> on the Songs page.</p>';
 }
 
 async function showCurrent() {
@@ -91,6 +91,22 @@ async function showCurrent() {
   const r = await fetch(`{{ url_for("api_entry") }}?key=${encodeURIComponent(queue[pos])}`);
   current = await r.json();
   paint();
+  // A song reached from the songs list may never have been searched — a sync
+  // creates entries empty. Search it now rather than showing a blank card the
+  // user has to rescue with "Find more".
+  if (!current.status && !current.has_image) await autoPropose();
+}
+
+async function autoPropose() {
+  const key = current.key;
+  busy = true;
+  $('msg').textContent = 'Searching for artwork…';
+  const d = await post('{{ url_for("api_propose_one") }}', {key});
+  busy = false;
+  if (queue[pos] !== key) return;   // skipped on while the search was running
+  if (d.ok) { current = d; paint(); }
+  $('msg').textContent = current.has_image
+    ? '' : 'Nothing found on iTunes — try Find more for other sources.';
 }
 
 function paint() {

@@ -255,6 +255,32 @@ def _add_next_source(entry: dict, cfg: dict) -> bool:
     return False
 
 
+def _adopt_first_candidate(lib, entry: dict) -> bool:
+    """
+    Store the first downloadable candidate in the pool as the entry's
+    ``proposed`` image. Returns False when none of them can be downloaded.
+    """
+    title, artist = entry["title"], entry["artist"]
+    for idx, cand in enumerate(entry.get("candidates", [])):
+        raw = try_download(cand)
+        if raw is not None:
+            store_candidate(lib, title, artist, cand, STATUS_PROPOSED, raw_bytes=raw)
+            entry["candidate_index"] = idx
+            lib.save()
+            return True
+    return False
+
+
+def _mark_proposed_without_image(lib, entry: dict) -> None:
+    """
+    Nothing downloadable — still mark proposed (no image) so the review card
+    shows it and the user can pull deeper sources on demand.
+    """
+    entry["file"] = None
+    lib.set_status(entry, STATUS_PROPOSED)
+    lib.save()
+
+
 def propose_entry(lib, cfg: dict, entry: dict) -> bool:
     """
     Bulk-propose step for one song: search iTunes only (fast, throttled by the
@@ -262,25 +288,38 @@ def propose_entry(lib, cfg: dict, entry: dict) -> bool:
     rest of the candidates for the reject-cycle. Returns True if art was stored.
     Sets ``proposed`` either way so the song surfaces in the review flow.
     """
-    title, artist = entry["title"], entry["artist"]
-    cands = sources.search_itunes(artist, title, cfg.get("itunes_country", "GB"))
-    entry["candidates"] = cands
+    entry["candidates"] = sources.search_itunes(
+        entry["artist"], entry["title"], cfg.get("itunes_country", "GB")
+    )
     entry["searched_sources"] = ["itunes"]
     entry["candidate_index"] = -1
 
-    for idx, cand in enumerate(cands):
-        raw = try_download(cand)
-        if raw is not None:
-            store_candidate(lib, title, artist, cand, STATUS_PROPOSED, raw_bytes=raw)
-            entry["candidate_index"] = idx
-            lib.save()
-            return True
+    if _adopt_first_candidate(lib, entry):
+        return True
+    _mark_proposed_without_image(lib, entry)
+    return False
 
-    # iTunes found nothing downloadable — still mark proposed (no image) so the
-    # review card shows it and the user can pull deeper sources on demand.
-    entry["file"] = None
-    lib.set_status(entry, STATUS_PROPOSED)
-    lib.save()
+
+def ensure_proposal(lib, cfg: dict, entry: dict) -> bool:
+    """
+    Bring a song that has never been through the propose flow up to a reviewable
+    state, and return True if it now has an image.
+
+    A sync creates entries empty (``status`` None, no candidates) and only the
+    propose flow fills them in, so a song opened straight from the songs list
+    would otherwise show an empty review card. This is the one call that closes
+    that gap: search if nothing has been searched yet, otherwise adopt the best
+    candidate already in the pool. It is deliberately a no-op once the entry has
+    a status or an image, so re-opening a card never re-searches and never
+    overwrites a decision the user already made.
+    """
+    if entry.get("status") or lib.has_image(entry):
+        return lib.has_image(entry)
+    if not entry.get("candidates"):
+        return propose_entry(lib, cfg, entry)
+    if _adopt_first_candidate(lib, entry):
+        return True
+    _mark_proposed_without_image(lib, entry)
     return False
 
 
@@ -343,8 +382,15 @@ def find_more_candidates(lib, cfg: dict, entry: dict) -> int:
     while len(entry.get("candidates", [])) == before:
         if not _add_next_source(entry, cfg):
             break
+    added = len(entry.get("candidates", [])) - before
+    # Nothing has ever been picked for this song (a never-proposed entry, or an
+    # iTunes miss): adopt the best option now, so the card shows art instead of
+    # only a gallery the user has to click to see anything at all. A candidate
+    # index of 0 or more means the reject-cycle has been here — leave it alone.
+    if added and entry.get("candidate_index", -1) < 0 and not lib.has_image(entry):
+        _adopt_first_candidate(lib, entry)
     lib.save()
-    return len(entry.get("candidates", [])) - before
+    return added
 
 
 def confirm_entry(lib, entry: dict) -> None:
