@@ -276,9 +276,15 @@ def index():
 @app.route("/settings")
 def settings_page():
     cfg = config.load_config()
+    # Fingerprint of the stored token — type plus its last four characters.
+    # The field itself is never pre-filled, so without this there is nothing on
+    # the page that distinguishes a working credential from one silently
+    # replaced by something the browser filled in.
+    stored_token = (cfg.get("api_token") or "").strip()
     return render_template("settings.html", cfg=cfg,
                            platforms=_PLATFORMS,
-                           token_set=bool((cfg.get("api_token") or "").strip()),
+                           token_set=bool(stored_token),
+                           token_hint=stored_token[-4:] if len(stored_token) >= 8 else "",
                            token_types=songlist.TOKEN_TYPES,
                            token_type=songlist.normalize_token_type(
                                cfg.get("api_token_type")),
@@ -286,10 +292,62 @@ def settings_page():
                            needs_setup=not cfg.get("streamersonglist_username"))
 
 
+def _verify_saved_credential(cfg: dict, previous_token: str) -> dict:
+    """
+    Check the token/type pair the user just submitted, before the save can be
+    reported as a success. Returns query args for the settings redirect, and
+    may correct ``api_token_type`` or put back the previous token.
+
+    This exists because on 2026-08-31 a User token was saved carrying the
+    Streamer prefix. SSL rejects that pair on every endpoint it has, so the
+    runtime service was rejected 300ms after this handler redirected — while
+    the page said "Settings saved." and both overlays quietly went empty for
+    five hours. Every fact needed to catch it was available here, at save
+    time, and nothing looked.
+
+    Outcomes:
+      * the pair works                → nothing to say
+      * a different prefix works      → correct the type and say so
+      * SSL rejects the token         → keep the credential that was already
+        stored and report SSL's own reason. A value the user never typed (a
+        password manager filling the box, which is what this form's
+        username+password shape invites) must not be able to replace a
+        working token.
+      * the check itself fails        → not a verdict: save, and say it could
+        not be checked
+    """
+    token = (cfg.get("api_token") or "").strip()
+    username = (cfg.get("streamersonglist_username") or "").strip()
+    if not token or not username:
+        return {}
+
+    asked_for = songlist.normalize_token_type(cfg.get("api_token_type"))
+    try:
+        _, token_type = songlist.resolve_streamer_with_token_type(username, cfg=cfg)
+    except (songlist.AuthRequired, songlist.Forbidden) as e:
+        if previous_token and previous_token != token:
+            cfg["api_token"] = previous_token
+            return {"token_error": f"{e} The token you just entered was not "
+                                   f"saved — the one that was already stored "
+                                   f"is still in use."}
+        return {"token_error": str(e)}
+    except requests.RequestException as e:
+        return {"token_warning": f"Saved, but the token could not be checked "
+                                 f"just now: {e}"}
+
+    if token_type != asked_for:
+        cfg["api_token_type"] = token_type
+        return {"token_fixed": token_type}
+    return {}
+
+
 @app.route("/settings", methods=["POST"])
 def save_settings():
     cfg = config.load_config()
     form = request.form
+    # Kept for _verify_saved_credential: a rejected new token must not be able
+    # to displace a working one.
+    previous_token = (cfg.get("api_token") or "").strip()
 
     cfg["streamersonglist_username"] = songlist.extract_username(
         form.get("streamersonglist_username", "").strip()
@@ -352,15 +410,18 @@ def save_settings():
         form.get("updates_check_enabled") == "on"
     )
 
-    config.save_config(cfg)
-    # Host/token/platform may have changed — re-probe which API is live.
+    # Host/token/platform may have changed — re-probe which API is live. This
+    # comes before the check below so it can't answer from a cached verdict.
     songlist.reset_backend()
+    notice = _verify_saved_credential(cfg, previous_token)
+
+    config.save_config(cfg)
     # Pick up the new username/source/interval without an app restart.
     if _runtime_wanted(cfg):
         runtime.service.restart(cfg)
     else:
         runtime.service.stop()
-    return redirect(url_for("settings_page", saved=1))
+    return redirect(url_for("settings_page", saved=1, **notice))
 
 
 @app.route("/songs")
@@ -960,7 +1021,10 @@ def overlay_queue_json():
         if promo is not None:
             rows.append(promo)
 
-    return jsonify({"items": rows, "options": opts})
+    # The overlay page ignores this (an OBS source must never render an error
+    # on stream) — it is here so opening the URL says why the list is empty.
+    error, _kind = runtime.service.error()
+    return jsonify({"items": rows, "options": opts, "error": error})
 
 
 @app.route("/overlay/fallback.png")
@@ -998,7 +1062,8 @@ def overlay_current_json():
     else:
         # Promo card wins over hide_when_empty: showing something is the point.
         view = _promo_item(cfg, opts, request.args)
-    return jsonify({"item": view, "options": opts})
+    error, _kind = runtime.service.error()
+    return jsonify({"item": view, "options": opts, "error": error})
 
 
 @app.route("/overlay/current")

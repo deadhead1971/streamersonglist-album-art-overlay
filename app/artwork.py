@@ -8,6 +8,7 @@ confirmations produce byte-identical library entries.
 
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from PIL import Image
@@ -30,11 +31,25 @@ USABLE_STATUSES = (STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_UNVERIFIED)
 def setup_logging():
     if log.handlers:
         return
+    # A Windows console is cp1252, and these messages are full of → and —.
+    # Without this, logging raises UnicodeEncodeError inside emit() and prints
+    # a 30-line traceback in place of the line — so the one message that tells
+    # a user their token is wrong is the one the console can't show them.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
-            logging.FileHandler(config.LOG_FILE, encoding="utf-8"),
+            # Rotated, not open-ended: a fault that logs on every overlay poll
+            # (a rejected token used to) writes thousands of identical lines an
+            # hour, and this file had reached 10 MB before anyone looked at it.
+            # Four files, so a session's history survives without unbounded
+            # growth.
+            RotatingFileHandler(config.LOG_FILE, maxBytes=2_000_000,
+                                backupCount=3, encoding="utf-8"),
             logging.StreamHandler(sys.stdout),
         ],
     )
