@@ -55,10 +55,22 @@ pip install -r requirements.txt
 StreamerSonglist's API requires a token for every request, so you need one before
 the app can see your songlist.
 
-1. Sign in at [streamersonglist.com](https://www.streamersonglist.com) and open
-   your **profile**.
-2. Find **API Access** and create a **user access token**.
-3. Copy it — you'll paste it into the app's Settings page in the next step.
+StreamerSonglist has **two kinds** of token, and the app needs to know which one
+you have — they look identical, so it can't tell on its own. Either works:
+
+| Token | Where you create it | Covers |
+|---|---|---|
+| **User** | Your **profile → API Access** | Every channel your account owns or administrates |
+| **Streamer** | Your channel's **Settings → Access** | That one channel |
+
+1. Sign in at [streamersonglist.com](https://www.streamersonglist.com).
+2. Create **either** token above — a **user access token** from your profile →
+   **API Access** is the usual choice.
+3. Copy it — you'll paste it into the app's Settings page in the next step, and
+   set **Token type** to match where you created it.
+
+If you're not sure which kind you have, paste it and click **Test connection** —
+the app tries the other type for you and sets the field to whichever works.
 
 Keep it private. It's stored only in your local `config.json` (which is never
 committed to git) and sent only to StreamerSonglist. Treat it like a password:
@@ -75,10 +87,12 @@ Double-click **`run_dashboard.bat`** (or run `python -m app.dashboard`).
 - Fill in:
   - **Username or songlist URL** — e.g. `yourname` or
     `https://www.streamersonglist.com/t/yourname/songs`.
-  - **API token** — paste the token from step 3. Then click **Test connection**:
-    it should show your channel name, avatar and song count. (Once saved, the
-    field shows dots instead of the token; leaving it untouched keeps the saved
-    one, and there's a tickbox to remove it.)
+  - **API token** — paste the token from step 3, and set **Token type** to
+    match where you made it (User or Streamer). Then click **Test connection**:
+    it should show your channel name, avatar and song count, and if you picked
+    the wrong type it corrects the field for you. (Once saved, the field goes
+    blank — leaving it blank keeps the saved token, and there's a tickbox to
+    remove it.)
   - **Platform** — `twitch` unless your SSL channel is on YouTube or Kick.
   - **Current song source** — leave on **StreamerSonglist queue** (recommended);
     the live service reads the top of your live queue. Only switch to **Text
@@ -225,6 +239,12 @@ committed to git — they're yours and local.
 - **Test connection fails** — most often a missing or mistyped **API token**
   (step 3); the app will say so if that's the cause. Otherwise check the
   username/URL — you can also paste your full songlist URL.
+- **"StreamerSonglist rejected this token"** — the token didn't paste in full,
+  or the **Token type** doesn't match where you created it. Click **Test
+  connection**: it tries the other types and sets the right one for you.
+- **"This token is not authorised for that channel"** — a **Streamer** token
+  only works for the channel it was created in, so this usually means a typo in
+  the username. Check it, or use a **User** token instead.
 - **"StreamerSonglist has upgraded its API and now requires a token"** — exactly
   what it says: create a token (step 3) and paste it into Settings.
 - **Which API am I talking to?** — run `python -m tools.probe_api` for a quick

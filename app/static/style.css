@@ -59,7 +59,10 @@ button.secondary { background: var(--panel2); }
 kbd { background: #0006; border: 1px solid var(--line); border-radius: 5px;
   padding: 0 5px; font-size: 12px; margin-left: 6px; }
 
-input[type=text], input[type=number], input[type=search] {
+/* password is here for the API token field: left out, it kept the browser's
+   default ~20-character width and light styling, so it sat narrow and pale
+   next to every other input and truncated its own placeholder. */
+input[type=text], input[type=number], input[type=search], input[type=password] {
   background: var(--bg); border: 1px solid var(--line); color: var(--text);
   padding: 9px 11px; border-radius: 8px; width: 100%;
 }

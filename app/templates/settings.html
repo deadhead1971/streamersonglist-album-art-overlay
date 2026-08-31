@@ -26,16 +26,29 @@
       </label>
 
       <label>API token
-        <input type="password" name="api_token" autocomplete="off" spellcheck="false"
-               value="{{ token_mask if token_set }}"
-               placeholder="Paste your token from your SSL profile → API Access">
+        <input type="password" name="api_token" autocomplete="new-password" spellcheck="false"
+               placeholder="{% if token_set %}A token is saved — leave blank to keep it{% else %}Paste your token from StreamerSonglist{% endif %}">
+      </label>
+
+      <label>Token type
+        <select name="api_token_type">
+          {% for t in token_types %}
+          <option value="{{ t }}" {{ 'selected' if token_type == t }}>{{ t }}</option>
+          {% endfor %}
+        </select>
       </label>
       <div class="muted small">
-        StreamerSonglist's new API requires a token. Create one at
+        StreamerSonglist's new API requires a token, and there are two kinds —
+        they look identical, so pick the one matching where you made it:
+        <strong>User</strong> from
         <a href="https://www.streamersonglist.com/profile" target="_blank" rel="noopener">your
-        SSL profile → API Access</a>. Stored locally in <code>config.json</code> and
-        sent only to StreamerSonglist — it is never committed or shared.
-        {% if token_set %}A token is saved; leave the field as-is to keep it.{% else %}
+        SSL profile → API Access</a>, or <strong>Streamer</strong> from your
+        channel's Settings → Access. (<strong>Bearer</strong> is for an OAuth2
+        token.) Not sure? Paste the token and hit <em>Test connection</em> — it
+        tries the others and sets this for you.
+        Stored locally in <code>config.json</code> and sent only to
+        StreamerSonglist — never committed or shared.
+        {% if not token_set %}
         You don't need one until StreamerSonglist switches over — the app detects
         which API is live and tells you when it's needed.{% endif %}
       </div>
@@ -205,19 +218,25 @@ document.getElementById('test-btn').addEventListener('click', async () => {
   const avatar = document.getElementById('test-avatar');
   const username = document.querySelector('[name=streamersonglist_username]').value;
   const platform = document.querySelector('[name=platform]').value;
-  // Only send a token the user actually typed — the mask means "keep the saved one".
-  const typed = document.querySelector('[name=api_token]').value;
-  const token = typed.startsWith('{{ token_mask }}') ? '' : typed;
+  // The box is empty when a token is already stored, and blank means "test the
+  // saved one" — so whatever is in it is sent as-is, with no mask to decode.
+  const token = document.querySelector('[name=api_token]').value;
+  const typeEl = document.querySelector('[name=api_token_type]');
   el.textContent = 'Testing…';
   avatar.hidden = true;
   try {
     const r = await fetch('{{ url_for("api_test_connection") }}', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({username, token, platform})
+      body: JSON.stringify({username, token, platform, token_type: typeEl.value})
     });
     const d = await r.json();
     if (d.ok) {
-      el.textContent = `✅ ${d.name} (id ${d.id}) — ${d.song_count} songs`;
+      // The token turned out to be the other kind: correct the select so the
+      // working type is what gets saved, and say so — silently changing a
+      // field the user chose would be worse than the original problem.
+      if (d.token_type) typeEl.value = d.token_type;
+      const note = d.token_type_changed ? ` — token type set to ${d.token_type}` : '';
+      el.textContent = `✅ ${d.name} (id ${d.id}) — ${d.song_count} songs${note}`;
       el.className = 'ok';
       if (d.avatar) {
         // A dead CDN URL degrades to no image rather than a broken-image icon.

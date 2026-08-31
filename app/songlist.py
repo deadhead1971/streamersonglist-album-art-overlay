@@ -46,12 +46,52 @@ DEFAULT_HOST = "https://api.streamersonglist.com"
 
 _HEADERS = {"User-Agent": USER_AGENT, "Accept": "application/json"}
 
-# Shown verbatim in the dashboard when a v2 read is rejected — the whole point
-# of the dual-backend build is that cutover day produces this instead of a dead
-# overlay and a silent log line.
+# Shown verbatim in the dashboard when a v2 read is rejected with no credential
+# at all — the whole point of the dual-backend build is that cutover day
+# produces this instead of a dead overlay and a silent log line.
 AUTH_MESSAGE = ("StreamerSonglist has upgraded its API and now requires a "
-                "token. Add your API token in Settings → StreamerSonglist "
-                "(create one at your SSL profile → API Access).")
+                "token. Add your API token in Settings → StreamerSonglist — "
+                "either a User token from your SSL profile → API Access, or a "
+                "Streamer token from your channel's Settings → Access.")
+
+# Authorization schemes v2 accepts, spelled exactly as they must appear in the
+# header. Verified live 2026-08-31 against production:
+#   User      profile → API Access; reaches every channel the account admins
+#   Streamer  channel Settings → Access; one channel, full access to that one
+#   Bearer    an OAuth2 access token
+# The prefix is case-sensitive — a lowercase "user" is rejected with "invalid
+# prefix" before the token is even looked at.
+TOKEN_TYPES = ("User", "Streamer", "Bearer")
+DEFAULT_TOKEN_TYPE = "User"
+
+# SSL's error bodies (ErrorModel.json) name the real failure in `detail`. This
+# module used to throw that away and answer every 401 with AUTH_MESSAGE, so a
+# user who had *already* pasted a token was told to add a token — which is
+# exactly what a wrong token type looks like. Details verified live 2026-08-31.
+_WRONG_TYPE_HINT = (
+    "Check it was pasted in full, and that the token type matches where you "
+    "created it — User for your SSL profile → API Access, Streamer for your "
+    "channel's Settings → Access."
+)
+_AUTH_DETAIL_MESSAGES = {
+    "missing authorization header": AUTH_MESSAGE,
+    "invalid prefix": (
+        "StreamerSonglist did not recognise the token type. Choose User, "
+        "Streamer or Bearer in Settings → StreamerSonglist."
+    ),
+    "invalid access token": "StreamerSonglist rejected this token. " + _WRONG_TYPE_HINT,
+    "invalid token": "StreamerSonglist rejected this token. " + _WRONG_TYPE_HINT,
+}
+
+# A Streamer token is bound to the one channel that created it, so a typo in
+# the username — or an SSL account name that differs from the platform one —
+# comes back 403 rather than 401. Before this existed the user got requests'
+# raw "403 Client Error: Forbidden for url: …" and no idea what to change.
+FORBIDDEN_STREAMER_MESSAGE = (
+    "This token is not authorised for that channel. A Streamer token only "
+    "works for the one channel it was created in — check the username, or use "
+    "a User token from your SSL profile → API Access."
+)
 
 # Matches .../t/{username}/... in a pasted StreamerSonglist URL. The new site
 # uses the same /t/{username}/songs shape, so this is unchanged.
@@ -69,8 +109,62 @@ class AuthRequired(requests.RequestException):
     """
 
 
+class Forbidden(requests.RequestException):
+    """
+    HTTP 403 — the credential is valid but may not read that streamer.
+
+    Subclasses RequestException for the same reason AuthRequired does: every
+    caller already treats one as "fetch failed, keep the last known state", so
+    a token pointed at the wrong channel can't read as an empty queue.
+    """
+
+
 class RateLimited(requests.RequestException):
     """HTTP 429. v2 documents it but publishes no numbers; callers back off."""
+
+
+def normalize_token_type(value: str) -> str:
+    """
+    Canonicalise a configured token type to one the API will accept.
+
+    Anything unrecognised becomes "User": passing an arbitrary string straight
+    into the header earns an "invalid prefix" 401 that looks identical to a bad
+    token, sending the user off hunting the wrong problem.
+    """
+    wanted = (value or "").strip().lower()
+    for name in TOKEN_TYPES:
+        if name.lower() == wanted:
+            return name
+    return DEFAULT_TOKEN_TYPE
+
+
+def _error_detail(resp) -> str:
+    """The reason string out of an SSL error body, or "" if there isn't one."""
+    try:
+        data = resp.json()
+    except ValueError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    return (data.get("detail") or "").strip()
+
+
+def _auth_error(resp):
+    """Map a 401/403 onto a typed exception carrying SSL's own reason."""
+    detail = _error_detail(resp)
+    if resp.status_code == 403:
+        if "not authorized for the requested streamer" in detail.lower():
+            return Forbidden(FORBIDDEN_STREAMER_MESSAGE, response=resp)
+        return Forbidden(
+            detail or "StreamerSonglist refused the request (403).", response=resp
+        )
+    message = _AUTH_DETAIL_MESSAGES.get(detail.lower())
+    if not message:
+        # An unrecognised reason still beats the generic text — pass it on
+        # rather than telling a user with a token to go and add one.
+        message = f"{AUTH_MESSAGE} (StreamerSonglist said: {detail})" if detail \
+            else AUTH_MESSAGE
+    return AuthRequired(message, response=resp)
 
 
 def extract_username(text: str) -> str:
@@ -115,16 +209,16 @@ def _headers(cfg: dict) -> dict:
     headers = dict(_HEADERS)
     token = (cfg.get("api_token") or "").strip()
     if token:
-        token_type = (cfg.get("api_token_type") or "").strip() or "User"
+        token_type = normalize_token_type(cfg.get("api_token_type"))
         headers["Authorization"] = f"{token_type} {token}"
     return headers
 
 
 def _get(url: str, params: dict, cfg: dict, timeout: int = 15) -> dict:
-    """GET + JSON, mapping 401/429 onto the typed exceptions above."""
+    """GET + JSON, mapping 401/403/429 onto the typed exceptions above."""
     resp = requests.get(url, params=params, headers=_headers(cfg), timeout=timeout)
-    if resp.status_code == 401:
-        raise AuthRequired(AUTH_MESSAGE, response=resp)
+    if resp.status_code in (401, 403):
+        raise _auth_error(resp)
     if resp.status_code == 429:
         retry = resp.headers.get("Retry-After", "?")
         raise RateLimited(
@@ -142,6 +236,7 @@ def _get(url: str, params: dict, cfg: dict, timeout: int = 15) -> dict:
 # Probe with the endpoint we actually need, and branch on the response:
 #   404 "Cannot GET /streamers"  -> still v1
 #   401                          -> v2 live, token missing/bad (actionable)
+#   403                          -> v2 live, token is for another streamer
 #   200 / 400 / 422              -> v2 live
 # A 5xx is transient, so it is raised rather than cached as a verdict.
 
@@ -151,7 +246,7 @@ _DETECTED = {"key": None, "backend": None}
 
 def _cache_key(cfg: dict) -> tuple:
     return (_host(cfg), (cfg.get("api_token") or "").strip(),
-            (cfg.get("api_token_type") or "").strip(), _platform(cfg))
+            normalize_token_type(cfg.get("api_token_type")), _platform(cfg))
 
 
 def reset_backend() -> None:
@@ -164,7 +259,8 @@ def reset_backend() -> None:
 def detect_backend(cfg: dict = None, username: str = "") -> str:
     """
     Return "v1" or "v2", probing once and caching the verdict for the session.
-    Raises AuthRequired if v2 is live but the token is missing or bad, and
+    Raises AuthRequired if v2 is live but the token is missing or bad,
+    Forbidden if it is valid for a different streamer, and
     requests.RequestException if the probe itself fails.
     """
     cfg = _cfg(cfg)
@@ -192,8 +288,8 @@ def detect_backend(cfg: dict = None, username: str = "") -> str:
         _DETECTED["backend"] = backend
     log.info("StreamerSonglist API detected: %s (%s)", backend, host)
 
-    if resp.status_code == 401:
-        raise AuthRequired(AUTH_MESSAGE, response=resp)
+    if resp.status_code in (401, 403):
+        raise _auth_error(resp)
     return backend
 
 
@@ -252,6 +348,49 @@ def resolve_streamer(username: str, cfg: dict = None) -> dict:
         "backend": "v2",
         "raw": data,
     }
+
+
+def resolve_streamer_with_token_type(username: str, cfg: dict = None):
+    """
+    Resolve a streamer, retrying with the other token prefixes if the
+    configured one is rejected. Returns ``(streamer, token_type)`` so the
+    caller can offer the type that actually worked.
+
+    This exists because the two token types are **indistinguishable by
+    inspection** — a User token and a Streamer token are both 32-character
+    opaque strings (checked against one of each, 2026-08-31) — so a user who
+    picked the wrong one cannot tell from the token, and neither can the app.
+    Without this, the only route out is guessing.
+
+    For the settings "Test connection" button only, never the runtime: it costs
+    an extra request per wrong guess, and on a live stream the configured type
+    is either right or the user needs to be told, not silently worked around.
+
+    Only AuthRequired moves on to the next type. A Forbidden means the
+    credential was accepted and pointed at the wrong channel — trying other
+    prefixes would replace that precise message with a vaguer one.
+    """
+    cfg = _cfg(cfg)
+    configured = normalize_token_type(cfg.get("api_token_type"))
+    if not (cfg.get("api_token") or "").strip():
+        # No token to vary — one plain attempt, whatever it reports.
+        return resolve_streamer(username, cfg=cfg), configured
+
+    order = [configured] + [t for t in TOKEN_TYPES if t != configured]
+    first_error = None
+    for token_type in order:
+        attempt = dict(cfg)
+        attempt["api_token_type"] = token_type
+        try:
+            streamer = resolve_streamer(username, cfg=attempt)
+        except AuthRequired as e:
+            first_error = first_error or e
+            continue
+        if token_type != configured:
+            log.info("Token accepted as %s, not the configured %s",
+                     token_type, configured)
+        return streamer, token_type
+    raise first_error
 
 
 def fetch_requests_active(username: str, cfg: dict = None):

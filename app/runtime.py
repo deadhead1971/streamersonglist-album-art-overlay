@@ -236,8 +236,11 @@ class RuntimeService:
             return None
         try:
             streamer = songlist.resolve_streamer(username, cfg=cfg)
-        except songlist.AuthRequired as e:
-            # Cutover day: say what to do rather than logging a bare 401.
+        except (songlist.AuthRequired, songlist.Forbidden) as e:
+            # Cutover day: say what to do rather than logging a bare 401. A 403
+            # joins it because a Streamer token aimed at the wrong channel is a
+            # settings mistake, not the transient blip the generic branch below
+            # assumes — it needs the loud message and the actionable text.
             with self._lock:
                 self._error = str(e)
             log.error("Runtime service: %s", self._error)
@@ -333,7 +336,7 @@ class RuntimeService:
                         self._error = str(e)
                     log.warning("SSL rate limited (%s) — next poll in %.0fs",
                                 e, interval + backoff)
-                except songlist.AuthRequired as e:
+                except (songlist.AuthRequired, songlist.Forbidden) as e:
                     with self._lock:
                         self._error = str(e)
                     log.error("SSL queue fetch rejected: %s", e)

@@ -42,7 +42,8 @@ def main() -> int:
     print(f"host      : {host}")
     print(f"platform  : {songlist._platform(cfg)}")
     print(f"username  : {username or '(none configured)'}")
-    print(f"token     : {'set (' + (cfg.get('api_token_type') or 'User') + ')' if token_set else 'NOT set'}")
+    token_type = songlist.normalize_token_type(cfg.get("api_token_type"))
+    print(f"token     : {'set (sent as ' + token_type + ')' if token_set else 'NOT set'}")
 
     if not username:
         print("\nNo username — pass --username to probe further.")
