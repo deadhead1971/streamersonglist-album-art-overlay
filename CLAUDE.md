@@ -12,7 +12,7 @@ A tool for music streamers using StreamerSonglist. One app — the **dashboard**
 
 - Install: `pip install -r requirements.txt` (Flask, requests, Pillow, centrifuge-python). `centrifuge-python` pulls `protobuf` unpinned — in a shared environment install `protobuf<6` afterwards or it breaks tensorflow / google-api-*.
 - Run dashboard: `python -m app.dashboard`
-- No tests or linter are configured. Verify by running the app; logs go to `artwork_fetcher.log`.
+- No tests or linter are configured. Verify by running the app; logs go to `artwork_fetcher.log` (rotated, 2MB x 4). If you go looking for an overlay poll and can't find it, that is deliberate: `artwork._DropPollingRequests` drops the *successful* werkzeug access lines for the four polled endpoints (`/overlay/queue.json`, `/overlay/current.json`, `/api/runtime/status`, `/img?`), which were 79% of the log measured on 2026-08-31 - about 2,200 lines an hour saying nothing happened. 4xx/5xx on those paths, page loads, POSTs and every app-logged line are kept.
 
 Windows environment (PowerShell 5.1); paths contain spaces — quote everything in `.bat` files.
 
