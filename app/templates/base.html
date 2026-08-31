@@ -23,19 +23,41 @@
     const el = document.getElementById('runtime-status');
     try {
       const d = await (await fetch('/api/runtime/status')).json();
+      // A rejected token is a settings mistake the user has to act on, so it
+      // gets a banner on the page. It used to live in this pill's `title`
+      // tooltip behind the words "Live service off", which reads as "you
+      // haven't switched it on" — and did, for five hours, while both
+      // overlays sat empty.
+      const banner = document.getElementById('runtime-banner');
+      if (d.error && d.error_kind === 'auth') {
+        document.getElementById('runtime-banner-text').textContent = d.error;
+        banner.hidden = false;
+      } else {
+        banner.hidden = true;
+      }
       if (d.running) {
         const song = d.current_title
           ? `▶ ${d.current_title}${d.current_artist ? ' — ' + d.current_artist : ''}`
           : 'queue empty';
         const live = d.events && d.events.connected && d.events.subscribed;
-        el.innerHTML = `<span class="dot on"></span> Live service: ${song} · ${d.queue_length} queued`
-          + (live ? ` · <span class="bolt" title="Instant updates connected">⚡</span>` : '');
-        el.title = live
-          ? 'Writing the artwork image and serving the overlays — instant updates connected'
-          : 'Writing the artwork image and serving the overlays — polling';
+        if (d.error) {
+          // Running but the last poll failed: the loop is retrying, so this is
+          // amber rather than red, and it clears itself on the next good poll.
+          el.innerHTML = `<span class="dot warn"></span> Live service: retrying`;
+          el.title = d.error;
+        } else {
+          el.innerHTML = `<span class="dot on"></span> Live service: ${song} · ${d.queue_length} queued`
+            + (live ? ` · <span class="bolt" title="Instant updates connected">⚡</span>` : '');
+          el.title = live
+            ? 'Writing the artwork image and serving the overlays — instant updates connected'
+            : 'Writing the artwork image and serving the overlays — polling';
+        }
+      } else if (d.error) {
+        el.innerHTML = `<span class="dot err"></span> Live service error`;
+        el.title = d.error;
       } else {
         el.innerHTML = `<span class="dot off"></span> Live service off`;
-        el.title = d.error || 'Enable in Settings (song source + runtime service)';
+        el.title = 'Enable in Settings (song source + runtime service)';
       }
     } catch (e) { /* leave as-is */ }
     setTimeout(pollRuntimeStatus, 5000);
@@ -43,6 +65,19 @@
   pollRuntimeStatus();
   </script>
   <main>
+    <!-- Live-service fault. Above the update banner on purpose: overlays that
+         are showing nothing right now outrank a new release. Filled in by
+         pollRuntimeStatus, and it disappears by itself once a poll succeeds. -->
+    <div id="runtime-banner" class="runtime-banner" hidden>
+      <span class="runtime-banner-icon">⚠</span>
+      <div class="update-body">
+        <strong>The live service can't read StreamerSonglist</strong>
+        <div class="small" id="runtime-banner-text"></div>
+        <div class="small">The overlays keep their last state until this is fixed.
+          <a href="{{ url_for('settings_page') }}">Open Settings →</a></div>
+      </div>
+    </div>
+
     <!-- Update banner. Lives in base.html so every dashboard page shows it —
          and note the overlay pages do NOT extend this template, so it can never
          appear in an OBS browser source. -->

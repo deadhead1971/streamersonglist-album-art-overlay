@@ -4,7 +4,21 @@
 {% block content %}
 <div class="panel">
   <h1>Settings</h1>
-  {% if request.args.get('saved') %}<div class="flash ok">Settings saved.</div>{% endif %}
+  {# "Saved" now means the credential was checked, not just written to disk.
+     A save that SSL rejected says so here instead of leaving the user to
+     discover it from empty overlays. #}
+  {% if request.args.get('token_error') %}
+  <div class="flash err">
+    <strong>Settings saved, but StreamerSonglist rejected the token.</strong>
+    {{ request.args.get('token_error') }}
+  </div>
+  {% elif request.args.get('token_warning') %}
+  <div class="flash warn">{{ request.args.get('token_warning') }}</div>
+  {% elif request.args.get('token_fixed') %}
+  <div class="flash ok">Settings saved — and your token turned out to be a
+    <strong>{{ request.args.get('token_fixed') }}</strong> token, so the token
+    type was corrected to match.</div>
+  {% elif request.args.get('saved') %}<div class="flash ok">Settings saved.</div>{% endif %}
   {% if needs_setup %}
   <div class="flash welcome">
     <strong>Welcome!</strong> Two things to set up:
@@ -16,7 +30,7 @@
   </div>
   {% endif %}
 
-  <form method="post" action="{{ url_for('save_settings') }}" class="form">
+  <form method="post" action="{{ url_for('save_settings') }}" class="form" autocomplete="off">
     <fieldset>
       <legend>StreamerSonglist</legend>
       <label>Username or songlist URL
@@ -25,10 +39,30 @@
                placeholder="alanthompson_music or https://www.streamersonglist.com/t/…/songs">
       </label>
 
+      {# A text username followed by a password field is exactly the shape a
+         password manager reads as a login form: it offers to save the token,
+         then re-fills this box on later visits — and since a non-blank value
+         means "this is the new token", a stale fill silently replaces a
+         working credential. That is how a User token came to be saved under
+         the Streamer prefix on 2026-08-31. Hence: autocomplete off, the
+         ignore attributes the major managers honour, and readonly until
+         focus, which is the part Chrome actually respects. The save-time
+         check in _verify_saved_credential is the backstop if one fills it
+         anyway. #}
       <label>API token
-        <input type="password" name="api_token" autocomplete="new-password" spellcheck="false"
+        <input type="password" name="api_token" autocomplete="off" spellcheck="false"
+               readonly onfocus="this.removeAttribute('readonly')"
+               data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other"
                placeholder="{% if token_set %}A token is saved — leave blank to keep it{% else %}Paste your token from StreamerSonglist{% endif %}">
       </label>
+      {% if token_set %}
+      <div class="muted small">
+        Saved: a <strong>{{ token_type }}</strong> token ending
+        <code>{{ token_hint or '••••' }}</code>. If that isn't the token you
+        expect, something re-filled the box on a previous save — paste the
+        right one and save again.
+      </div>
+      {% endif %}
 
       <label>Token type
         <select name="api_token_type">
