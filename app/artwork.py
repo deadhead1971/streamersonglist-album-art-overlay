@@ -7,6 +7,7 @@ confirmations produce byte-identical library entries.
 """
 
 import logging
+import re
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -26,6 +27,40 @@ SOURCE_ORDER = ("itunes", "lastfm", "musicbrainz")
 # Library statuses whose stored image the runtime is willing to display, best
 # first. rejected_all is excluded (user rejected everything → go live/fallback).
 USABLE_STATUSES = (STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_UNVERIFIED)
+
+
+# Endpoints something polls on a timer: both overlays (every 5s each, per OBS
+# browser source *and* per preview iframe), the dashboard's status pill (every
+# 5s per open tab), and one /img request per thumbnail on the songs and review
+# pages. Werkzeug logs a line per request, and measured on 2026-08-31 these
+# were 79% of a 10MB log — ~2,200 lines an hour saying nothing happened, which
+# pushes real history out of the rotation window.
+_POLLED_PATHS = ("/overlay/queue.json", "/overlay/current.json",
+                 "/api/runtime/status", "/img?")
+
+# The status code in a werkzeug access line: '"GET /x HTTP/1.1" 200 -'.
+_ACCESS_STATUS_RE = re.compile(r'"\s+(\d{3})\s')
+
+
+class _DropPollingRequests(logging.Filter):
+    """
+    Drop the *successful* access-log lines for those endpoints.
+
+    Only the successful ones: a 404 or a 500 on a polling endpoint is the
+    interesting case (a browser source pointed at the wrong URL, a handler
+    blowing up mid-stream), and dropping those would trade one blind spot for
+    a worse one. Everything else — page loads, POSTs, errors, and every line
+    the app itself logs — is untouched.
+    """
+
+    def filter(self, record) -> bool:
+        if record.levelno > logging.INFO:
+            return True
+        message = record.getMessage()
+        if not any(path in message for path in _POLLED_PATHS):
+            return True
+        match = _ACCESS_STATUS_RE.search(message)
+        return bool(match) and int(match.group(1)) >= 400
 
 
 def setup_logging():
@@ -53,6 +88,10 @@ def setup_logging():
             logging.StreamHandler(sys.stdout),
         ],
     )
+    # On the logger, not the handlers: Logger.handle() applies its own filters
+    # before propagating, so this keeps the polling lines out of the file and
+    # the console with one attachment.
+    logging.getLogger("werkzeug").addFilter(_DropPollingRequests())
 
 
 # ---------------------------------------------------------------------------
