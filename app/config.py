@@ -41,7 +41,13 @@ DEFAULT_CONFIG = {
     # SSL flips.
     #   api_base       blank = production; set to the staging host to test
     #   api_token      the SSL access token — NEVER commit this
-    #   api_token_type "User" (profile → API Access) or "Streamer"
+    #   api_token_type which Authorization prefix the token needs. The two
+    #                  kinds look identical (both 32 opaque chars), so this
+    #                  cannot be sniffed from the token — the user picks it,
+    #                  and Test connection finds it for them:
+    #                    "User"     profile → API Access; every channel they admin
+    #                    "Streamer" channel Settings → Access; that one channel
+    #                    "Bearer"   an OAuth2 access token
     #   platform       twitch | youtube | kick | none
     "api_base": "",
     "api_token": "",

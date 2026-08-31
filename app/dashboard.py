@@ -50,8 +50,9 @@ PROPOSE_DELAY = 3.0
 # Platforms the StreamerSonglist API accepts for username resolution.
 _PLATFORMS = ("twitch", "youtube", "kick", "none")
 
-# Placeholder shown in place of a stored API token — never the token itself.
-TOKEN_MASK = "•" * 12
+# The token field is never pre-filled — not with the token, and not with a
+# placeholder value standing in for it (see save_settings for why the old
+# bullet mask had to go). `token_set` alone tells the page one is stored.
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +279,9 @@ def settings_page():
     return render_template("settings.html", cfg=cfg,
                            platforms=_PLATFORMS,
                            token_set=bool((cfg.get("api_token") or "").strip()),
-                           token_mask=TOKEN_MASK,
+                           token_types=songlist.TOKEN_TYPES,
+                           token_type=songlist.normalize_token_type(
+                               cfg.get("api_token_type")),
                            update=updates.state(cfg),
                            needs_setup=not cfg.get("streamersonglist_username"))
 
@@ -291,14 +294,28 @@ def save_settings():
     cfg["streamersonglist_username"] = songlist.extract_username(
         form.get("streamersonglist_username", "").strip()
     )
-    # API token: the field renders masked, so a blank submit means "leave it
-    # alone" rather than "clear it" — otherwise every settings save would wipe
-    # the credential. Clearing is explicit.
-    token = form.get("api_token", "").strip()
+    # API token: the field always renders empty, so a blank submit means "leave
+    # it alone" rather than "clear it" — otherwise every settings save would
+    # wipe the credential. Clearing is explicit.
+    #
+    # The field used to be pre-filled with a row of bullets and anything
+    # starting with one was discarded as "that's just the mask". Pasting a new
+    # token after the existing text — which is what clicking into a filled
+    # password box and pasting does — therefore threw the token away and still
+    # reported "Settings saved.". An empty box cannot be appended to.
+    #
+    # The leading-bullet strip is for pages served before this change: a tab
+    # left open on the old settings form still submits the mask, and under the
+    # new "anything non-blank is the token" rule that would overwrite a working
+    # credential with bullets. All bullets means "keep"; bullets followed by
+    # anything else is the old paste-after-the-mask case, and the real token is
+    # what comes after. No SSL token starts with "•".
+    token = form.get("api_token", "").strip().lstrip("•").strip()
     if form.get("api_token_clear") == "on":
         cfg["api_token"] = ""
-    elif token and not token.startswith("•"):
+    elif token:
         cfg["api_token"] = token
+    cfg["api_token_type"] = songlist.normalize_token_type(form.get("api_token_type"))
     platform = form.get("platform", "twitch").strip().lower()
     cfg["platform"] = platform if platform in _PLATFORMS else "twitch"
     source = form.get("song_source", "streamersonglist").strip()
@@ -428,19 +445,30 @@ def api_test_connection():
     body = request.json or {}
     cfg = config.load_config()
     # Field values from the unsaved form win; a blank token falls back to the
-    # stored one (the form renders it masked, never in the page source).
+    # stored one (the form never renders the stored token, masked or otherwise).
     if body.get("token"):
         cfg["api_token"] = body["token"].strip()
     if body.get("platform"):
         cfg["platform"] = body["platform"].strip()
+    if body.get("token_type"):
+        cfg["api_token_type"] = songlist.normalize_token_type(body["token_type"])
+    asked_for = songlist.normalize_token_type(cfg.get("api_token_type"))
 
     try:
-        streamer = songlist.resolve_streamer(body.get("username", ""), cfg=cfg)
+        # Retries the other prefixes if this one is rejected, because nothing
+        # about a token says which kind it is. The type that worked goes back
+        # to the page so the select can correct itself before the user saves —
+        # the test still only reports, it never writes config.json.
+        streamer, token_type = songlist.resolve_streamer_with_token_type(
+            body.get("username", ""), cfg=cfg)
+        cfg["api_token_type"] = token_type
         sid = streamer.get("id")
         return jsonify({"ok": True, "id": sid,
                         "name": streamer.get("name"),
                         "avatar": streamer.get("avatar"),
                         "backend": streamer.get("backend"),
+                        "token_type": token_type,
+                        "token_type_changed": token_type != asked_for,
                         "song_count": songlist.fetch_song_count(sid, cfg=cfg)})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
