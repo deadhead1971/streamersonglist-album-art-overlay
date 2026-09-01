@@ -12,6 +12,7 @@ The manifest tolerates a manually deleted image file: an entry whose ``file`` is
 gone is treated as needing art again (``has_image`` returns False).
 """
 
+import hashlib
 import json
 import re
 import threading
@@ -28,10 +29,112 @@ STATUS_CONFIRMED = "confirmed"      # user approved
 STATUS_UNVERIFIED = "unverified"    # grabbed live during a stream (review queue)
 STATUS_REJECTED_ALL = "rejected_all"  # user/runtime exhausted candidates, no art
 
+# Statuses whose stored image is willing to be displayed, best first.
+# rejected_all is excluded — but note it can never carry an image anyway: both
+# code paths that set it null the ``file`` field first, so has_image() is False
+# by construction. ``artwork.USABLE_STATUSES`` aliases this; it lives here so
+# library-side helpers (the art wall's tile pool) can use it without importing
+# artwork and creating a cycle.
+USABLE_STATUSES = (STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_UNVERIFIED)
+
 # Process-wide guard for manifest reads/writes: the dashboard's request threads
 # and the background runtime service each hold their own Library instances, so
 # serialise the file I/O to prevent torn writes.
 MANIFEST_LOCK = threading.RLock()
+
+# ---------------------------------------------------------------------------
+# Content hashing — the art wall's tile identity
+# ---------------------------------------------------------------------------
+
+# 31% of a real library is duplicate artwork (measured 2026-09-01: 188 files,
+# 129 distinct images, one EP cover repeated twelve times). A grid of covers
+# has to dedupe or the same tile visibly appears more than once.
+#
+# The hash is the key, not the manifest's ``album`` field: album is null on 15
+# of those entries and splits variants like "Gold" / "Gold (UK Version)", so it
+# collapses more than the truth. Naming the thumbnail cache by this hash makes
+# dedupe, cache size and browser caching one decision instead of three.
+#
+# Hashing 100MB of PNGs is far too slow to repeat per request, so it is memoised
+# per path and invalidated on (mtime, size) — a file replaced by hand re-hashes,
+# an untouched one never does. Bounded by file count, so it cannot grow.
+_HASH_MEMO = {}          # path str -> (mtime_ns, size, digest)
+_HASH_LOCK = threading.Lock()
+
+
+def content_hash(path: Path) -> Optional[str]:
+    """MD5 of an image file's bytes, memoised. None if it cannot be read."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+
+    key = str(path)
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    with _HASH_LOCK:
+        cached = _HASH_MEMO.get(key)
+        if cached is not None and cached[:2] == stamp:
+            return cached[2]
+
+    try:
+        digest = hashlib.md5(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+    with _HASH_LOCK:
+        _HASH_MEMO[key] = (stamp[0], stamp[1], digest)
+    return digest
+
+
+# Byte hashing catches only exact duplicates, and that is not enough in
+# practice: the same cover downloaded twice at different times comes back
+# re-encoded, so it has two MD5s and lands on the wall twice. Measured on this
+# library 2026-09-01 — 129 distinct by MD5, 128 by perceptual hash, the miss
+# being four Ryan Adams songs carrying two encodings of one Ashes & Fire cover.
+#
+# A difference hash fixes that: greyscale, squash to 9x8, and record whether
+# each pixel is brighter than its right-hand neighbour. Re-encoding does not
+# change those comparisons; a genuinely different cover changes many of them.
+# Used only for grouping — the tile's identity in URLs stays the content hash,
+# so a mistaken grouping can hide a cover but can never serve the wrong file.
+_PHASH_MEMO = {}         # path str -> (mtime_ns, size, bits)
+_PHASH_SIDE = 8
+
+
+def perceptual_hash(path: Path) -> Optional[int]:
+    """Difference hash of an image, memoised. None if it cannot be read."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+
+    key = str(path)
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    with _HASH_LOCK:
+        cached = _PHASH_MEMO.get(key)
+        if cached is not None and cached[:2] == stamp:
+            return cached[2]
+
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            small = im.convert("L").resize(
+                (_PHASH_SIDE + 1, _PHASH_SIDE), Image.Resampling.LANCZOS
+            )
+            pixels = list(small.getdata())
+    except (OSError, ValueError):
+        return None
+
+    bits = 0
+    for row in range(_PHASH_SIDE):
+        offset = row * (_PHASH_SIDE + 1)
+        for col in range(_PHASH_SIDE):
+            brighter = pixels[offset + col] > pixels[offset + col + 1]
+            bits = (bits << 1) | (1 if brighter else 0)
+
+    with _HASH_LOCK:
+        _PHASH_MEMO[key] = (stamp[0], stamp[1], bits)
+    return bits
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +316,72 @@ class Library:
         return {
             k: v for k, v in self._manifest.items() if v.get("status") == status
         }
+
+    # -- art wall tiles ------------------------------------------------------
+
+    def tile_pool(self, songlist_only: bool = True, exclude=(),
+                  dedupe: bool = True) -> list:
+        """
+        Artwork available to the art wall: ``[{hash, title, artist}, ...]``.
+
+        Any entry with a usable status and an image on disk qualifies, not just
+        confirmed ones — once a user has run Sync and Find artwork there is art
+        to show, and reviewing it is their call rather than a gate. This is the
+        same test the other overlays already apply in ``_resolve_art``.
+
+        ``songlist_only`` drops songs no longer in the songlist. It defaults on:
+        without it the wall advertises songs that have been removed, and a
+        viewer requests something the streamer cannot play.
+        """
+        excluded = set(exclude or ())
+        seen = set()
+        tiles = []
+        for entry in self._manifest.values():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("status") not in USABLE_STATUSES:
+                continue
+            if songlist_only and not entry.get("in_songlist"):
+                continue
+            path = self.image_path(entry)
+            if not path or not path.exists():
+                continue
+            digest = content_hash(path)
+            if digest is None or digest in excluded:
+                continue
+            if dedupe:
+                # Group on what the cover LOOKS like, not on its bytes: the
+                # same artwork fetched twice comes back re-encoded and would
+                # otherwise appear on the wall more than once. Falls back to
+                # the byte hash if the image cannot be decoded.
+                group = perceptual_hash(path)
+                if group is None:
+                    group = digest
+                if group in seen:
+                    continue
+                seen.add(group)
+            tiles.append({
+                "hash": digest,
+                "title": entry.get("title") or "",
+                "artist": entry.get("artist") or "",
+            })
+        return tiles
+
+    def path_for_hash(self, digest: str) -> Optional[Path]:
+        """
+        The image file behind a tile hash. Used by the thumbnail route, which
+        is handed a hash rather than a library key so identical artwork shares
+        one URL (and therefore one browser cache entry).
+        """
+        if not digest:
+            return None
+        for entry in self._manifest.values():
+            if not isinstance(entry, dict):
+                continue
+            path = self.image_path(entry)
+            if path and path.exists() and content_hash(path) == digest:
+                return path
+        return None
 
     def save_image_bytes(self, title: str, artist: str, data: bytes) -> str:
         """

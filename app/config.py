@@ -23,6 +23,12 @@ EXAMPLE_PATH = ROOT / "config.example.json"
 LIBRARY_DIR = ROOT / "library"
 MANIFEST_PATH = LIBRARY_DIR / "manifest.json"
 
+# Art wall thumbnail cache. Named by image content hash, so identical artwork
+# (31% of a real library) collapses to one file and one URL. Disposable —
+# deleting it just means the next wall load regenerates. Inside library/, which
+# is already gitignored.
+THUMBS_DIR = LIBRARY_DIR / "thumbs"
+
 LOG_FILE = ROOT / "artwork_fetcher.log"
 
 # MusicBrainz asks that the User-Agent identify the app + a contact URL. Identify
@@ -141,6 +147,35 @@ DEFAULT_CONFIG = {
         "closed_text": "",
         "closed_subtext": "",
         "closed_image": "",
+    },
+    # Art wall (OBS browser source at /overlay/wall): a grid of album covers
+    # drawn from the local library. Unlike the other overlays this one reads no
+    # queue and polls nothing — the tile list is fetched once on load.
+    "wall": {
+        # The ONLY size control. Tiles are square at 1fr, so the number of rows
+        # is whatever fits the browser source's height — one setting covers
+        # landscape and portrait, and it survives a resize in OBS. Capped at 12
+        # because past that a normal library has over half of itself on screen.
+        "columns": 6,
+        "gap": 0,                # px between tiles. 0 = gapless mosaic
+        "radius": 0,             # px corner radius. 0 = square
+        # Reserved. v1 accepts "library" only; a live-queue source can land
+        # later without a config migration.
+        "source": "library",
+        "filter": "songlist",    # songlist = only songs still in the songlist
+        "dedupe": True,          # one tile per distinct image (see content_hash)
+        "exclude": [],           # content hashes the user has hidden
+        "order": "shuffle",
+        # Motion. The swap is what makes the wall feel alive: every
+        # swap_interval seconds one tile cross-fades to a cover that is not
+        # currently on screen. It needs SURPLUS to work — with exactly as many
+        # covers as tiles there is nothing to swap in and the wall is frozen.
+        "swap_interval": 4,      # seconds. 0 = static wall
+        "swap_fade": 1200,       # ms cross-fade
+        "drift": True,           # slow Ken Burns scale/pan, random per tile
+        "assemble": True,        # staggered fade-in on load, in random order
+        "breathe": False,        # slow opacity idle (compounds with drift)
+        "hero_interval": 0,      # seconds between highlight pulses. 0 = off
     },
     "reflection": {
         "enabled": True,

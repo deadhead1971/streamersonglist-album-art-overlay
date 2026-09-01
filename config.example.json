@@ -46,6 +46,22 @@
     "closed_subtext": "",
     "closed_image": ""
   },
+  "wall": {
+    "columns": 6,
+    "gap": 0,
+    "radius": 0,
+    "source": "library",
+    "filter": "songlist",
+    "dedupe": true,
+    "exclude": [],
+    "order": "shuffle",
+    "swap_interval": 4,
+    "swap_fade": 1200,
+    "drift": true,
+    "assemble": true,
+    "breathe": false,
+    "hero_interval": 0
+  },
   "reflection": {
     "enabled": true,
     "height": 0.6,

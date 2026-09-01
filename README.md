@@ -190,6 +190,40 @@ that message blank. Use the **Preview the empty-queue card** dropdown under
 either preview to see both states without touching your live queue or your
 request settings.
 
+### The art wall
+
+Once you have a library, the dashboard can show it off. The **art wall** is a
+grid of your album covers that fills whatever OBS source you give it — a
+full-screen background, a starting-soon or intermission scene, or a panel
+beside your other overlays. It reads nothing from your queue, so it works
+offline and before you go live.
+
+Set it up on the **Overlay** page under *Art wall*. You choose the number of
+**columns**; the wall works out how many rows fit the source you gave it, so
+the same setting suits a wide scene and a tall one. Gap and corner radius are
+yours to set: leave both at 0 for a gapless mosaic that fills the screen like
+wallpaper, or raise them for a gallery of separate covers.
+
+The wall does not sit still. Every few seconds one cover cross-fades to another
+from your library, each tile drifts very slowly on its own cycle, and covers
+fade in one at a time in random places when the scene starts. All of it is
+adjustable, and setting the swap interval to 0 holds it still.
+
+A few things worth knowing:
+
+- **Confirmed, proposed and live-grabbed artwork all count**, so the wall looks
+  good before you have reviewed anything. If you have no artwork at all yet,
+  the browser source simply renders nothing — run *Sync songlist* and *Find
+  artwork* on the Songs page and it fills itself in.
+- **Each cover appears once.** Several songs usually share an album, and the
+  wall recognises the same cover even when it was downloaded twice.
+- **Click any cover in the preview to hide it** from the wall. Hidden covers
+  stay in your library; you can bring them all back from the same panel.
+- **Tick "Shutdown source when not visible"** on this browser source in OBS. It
+  stops the animation using CPU behind a scene you are not showing — and it
+  means the wall reshuffles and replays its reveal each time you cut back to
+  that scene, so it looks different every time.
+
 ## 7. Your artwork library
 
 Images live in the `library/` folder, named `Artist - Title.png`, at full

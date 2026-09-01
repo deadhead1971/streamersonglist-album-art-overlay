@@ -196,6 +196,28 @@ table.songs th { color: var(--muted); font-weight: 600; font-size: 13px; }
    needs the panel's full width to accommodate long titles. */
 .overlay-layout-stacked { grid-template-columns: 1fr; }
 .overlay-layout-stacked .overlay-preview iframe { height: 280px; }
+
+/* The art wall fills whatever source it is given, so its preview has to be a
+   realistic shape to judge — a 16:9 box, matching a normal scene. */
+.overlay-preview.wall-preview iframe { height: auto; aspect-ratio: 16 / 9; }
+
+/* Sub-nav: four overlays now share this page, so anchor links keep it
+   navigable without splitting it up. Sits directly under the sticky topbar. */
+.subnav {
+  position: sticky; top: 54px; z-index: 9;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 10px 0 12px; margin-bottom: 4px; background: var(--bg);
+}
+.subnav a {
+  padding: 6px 12px; border-radius: 8px; font-size: 14px;
+  color: var(--muted); background: var(--panel2);
+}
+.subnav a:hover { color: var(--text); }
+/* Both bars are sticky, so an anchored panel must clear them both. */
+.panel[id] { scroll-margin-top: 112px; }
+
+/* Hidden-cover count, shown only once the user has hidden something. */
+.wall-hidden { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .form select, .form input[type=color] {
   background: var(--bg); border: 1px solid var(--line); color: var(--text);
   padding: 8px 10px; border-radius: 8px; width: 100%; margin-top: 5px;

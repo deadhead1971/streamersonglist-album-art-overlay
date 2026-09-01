@@ -9,6 +9,7 @@ request handlers never block on it.
 import io
 import json
 import logging
+import random
 import socket
 import subprocess
 import sys
@@ -23,7 +24,7 @@ from flask import (
 )
 from PIL import Image
 
-from . import __version__, artwork, config, runtime, songlist, updates
+from . import __version__, artwork, config, imaging, runtime, songlist, updates
 from .library import (
     Library, STATUS_PROPOSED, STATUS_UNVERIFIED,
     normalize_key,
@@ -844,6 +845,69 @@ def overlay_current_options(cfg: dict, args) -> dict:
     return opts
 
 
+_WALL_FILTERS = ("songlist", "all")
+
+_WALL_BOOL_KEYS = {
+    "dedupe": "dedupe",
+    "drift": "drift",
+    "assemble": "assemble",
+    "breathe": "breathe",
+}
+
+# (query param, config key, min, max). ``columns`` is capped at 12 because past
+# that a normal library has over half of itself on screen at once, which leaves
+# the swap nothing to draw on.
+_WALL_INT_SPECS = (
+    ("cols", "columns", 2, 12),
+    ("gap", "gap", 0, 64),
+    ("radius", "radius", 0, 64),
+    ("swap", "swap_interval", 0, 3600),
+    ("fade", "swap_fade", 0, 10000),
+    ("hero", "hero_interval", 0, 3600),
+)
+
+
+def wall_options(cfg: dict, args) -> dict:
+    """
+    Effective art wall options: defaults + config + query overrides.
+
+    Deliberately not routed through _merge_overlay_options: the wall has no
+    preset, animation mode or accent colour, and that helper would graft those
+    keys onto the section where nothing reads them.
+    """
+    opts = dict(config.DEFAULT_CONFIG["wall"])
+    opts.update(cfg.get("wall", {}))
+
+    for param, key in _WALL_BOOL_KEYS.items():
+        if param in args:
+            opts[key] = args.get(param) not in ("0", "false", "no", "")
+    for param, key, lo, hi in _WALL_INT_SPECS:
+        if param in args:
+            try:
+                opts[key] = min(hi, max(lo, int(args.get(param))))
+            except (TypeError, ValueError):
+                pass
+    if args.get("filter") in _WALL_FILTERS:
+        opts["filter"] = args.get("filter")
+    # ``source`` is reserved for a future live-queue mode. Coerce anything else
+    # back rather than letting a stale config or a typo render an empty wall.
+    if opts.get("source") != "library":
+        opts["source"] = "library"
+    return opts
+
+
+def wall_tiles(cfg: dict, opts: dict) -> list:
+    """The tile pool for these options, shuffled if that is the chosen order."""
+    tiles = Library().tile_pool(
+        songlist_only=(opts.get("filter") == "songlist"),
+        exclude=opts.get("exclude") or (),
+        dedupe=bool(opts.get("dedupe", True)),
+    )
+    if opts.get("order") == "shuffle":
+        random.shuffle(tiles)
+    return tiles
+
+
 def _resolve_art(lib: Library, title: str, artist: str) -> str:
     """URL of the stored artwork for a song, or the overlay fallback image."""
     entry = lib.get(title, artist)
@@ -1074,6 +1138,85 @@ def overlay_current_page():
                            qs=request.query_string.decode("utf-8"))
 
 
+# ---------------------------------------------------------------------------
+# Art wall
+# ---------------------------------------------------------------------------
+
+@app.route("/overlay/wall")
+def overlay_wall_page():
+    cfg = config.load_config()
+    opts = wall_options(cfg, request.args)
+    return render_template("overlay_wall.html", opts=opts,
+                           pick=request.args.get("pick") == "1",
+                           qs=request.query_string.decode("utf-8"))
+
+
+@app.route("/overlay/wall.json")
+def overlay_wall_json():
+    """
+    The tile pool, fetched once on page load and never polled — the wall reads
+    library data, not the queue, so there is nothing to poll for. That makes it
+    the cheapest overlay on the server and the most expensive in the browser,
+    the exact inverse of the queue and now-playing cards.
+    """
+    cfg = config.load_config()
+    opts = wall_options(cfg, request.args)
+    return jsonify({"tiles": wall_tiles(cfg, opts), "options": opts})
+
+
+@app.route("/overlay/wall/tile")
+def overlay_wall_tile():
+    """
+    One thumbnail, addressed by image content hash rather than by library key,
+    so identical artwork shares a single URL and therefore a single browser
+    cache entry. Cached immutably: the hash IS the version, so changed artwork
+    is a different URL and a stale image cannot be served.
+    """
+    digest = (request.args.get("h") or "").strip().lower()
+    if len(digest) != 32 or not all(c in "0123456789abcdef" for c in digest):
+        return "bad hash", 400
+    try:
+        requested = int(request.args.get("s", 512))
+    except (TypeError, ValueError):
+        requested = 512
+    size = imaging.snap_thumb_size(max(1, requested))
+
+    thumb = imaging.thumbnail_path(digest, size)
+    if not thumb.exists():
+        source = Library().path_for_hash(digest)
+        if source is None:
+            return "not found", 404
+        thumb = imaging.ensure_thumbnail(source, digest, size)
+        if thumb is None:
+            return "unreadable", 404
+
+    resp = send_file(thumb, mimetype="image/webp")
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
+@app.route("/overlay/wall/exclude", methods=["POST"])
+def overlay_wall_exclude():
+    """
+    Hide or restore one cover. Clicking a tile in the settings preview is the
+    whole curation story — an exclude list rather than a picker, because the
+    real case is "that one cover is wrong", not "let me choose all 128".
+    """
+    data = request.json or {}
+    digest = str(data.get("hash", "")).strip().lower()
+    if len(digest) != 32 or not all(c in "0123456789abcdef" for c in digest):
+        return jsonify({"ok": False, "error": "bad hash"}), 400
+
+    cfg = config.load_config()
+    opts = cfg.setdefault("wall", {})
+    excluded = [h for h in (opts.get("exclude") or []) if h != digest]
+    if data.get("action") != "show":
+        excluded.append(digest)
+    opts["exclude"] = excluded
+    config.save_config(cfg)
+    return jsonify({"ok": True, "excluded": len(excluded)})
+
+
 @app.route("/overlay")
 def overlay_settings_page():
     cfg = config.load_config()
@@ -1084,6 +1227,13 @@ def overlay_settings_page():
     overlay_url = url_for("overlay_queue_page", _external=True)
     current_url = url_for("overlay_current_page", _external=True)
     loader_dir = Path(__file__).resolve().parent.parent / "obs"
+
+    # The wall's tile count drives the headroom advice in its panel. Hashing the
+    # library the first time costs a second or so; it is memoised per file after
+    # that, and this is a page load, never a request the overlays wait on.
+    wall_opts = wall_options(cfg, {})
+    wall_pool = len(wall_tiles(cfg, wall_opts))
+
     return render_template("overlay_settings.html", opts=opts, cfg=cfg,
                            queue_loader=str(loader_dir / "overlay_queue.html"),
                            current_loader=str(loader_dir / "overlay_current.html"),
@@ -1091,6 +1241,10 @@ def overlay_settings_page():
                            promo=cfg.get("promo", {}),
                            has_avatar=bool(_streamer_avatar(cfg)),
                            layouts=_CURRENT_LAYOUTS,
+                           wall_opts=wall_opts, wall_pool=wall_pool,
+                           wall_url=url_for("overlay_wall_page", _external=True),
+                           wall_loader=str(loader_dir / "overlay_wall.html"),
+                           wall_filters=_WALL_FILTERS,
                            overlay_url=overlay_url, presets=_OVERLAY_PRESETS,
                            animations=_OVERLAY_ANIMATIONS, speeds=_OVERLAY_SPEEDS)
 
@@ -1175,6 +1329,31 @@ def save_overlay_promo_settings():
 
     config.save_config(cfg)
     return redirect(url_for("overlay_settings_page", saved="promo") + "#promo")
+
+
+@app.route("/overlay/wall", methods=["POST"])
+def save_overlay_wall_settings():
+    cfg = config.load_config()
+    form = request.form
+    opts = cfg.setdefault("wall", {})
+    defaults = config.DEFAULT_CONFIG["wall"]
+
+    for key in _WALL_BOOL_KEYS.values():
+        opts[key] = form.get(key) == "on"
+    for _param, key, lo, hi in _WALL_INT_SPECS:
+        try:
+            opts[key] = min(hi, max(lo, int(form.get(key, defaults[key]))))
+        except (TypeError, ValueError):
+            opts[key] = defaults[key]
+    filt = form.get("filter", "songlist")
+    opts["filter"] = filt if filt in _WALL_FILTERS else "songlist"
+    # "Show all hidden covers" clears the exclude list; otherwise it is only
+    # ever touched by clicking a tile, so this form must not overwrite it.
+    if form.get("clear_exclude") == "on":
+        opts["exclude"] = []
+
+    config.save_config(cfg)
+    return redirect(url_for("overlay_settings_page", saved="wall") + "#wall")
 
 
 # ---------------------------------------------------------------------------

@@ -14,12 +14,16 @@ changing image_size/reflection never requires re-fetching.
 
 import logging
 import os
+import threading
 import time
 from io import BytesIO
+from pathlib import Path
+from typing import Optional
 
 import requests
 from PIL import Image
 
+from . import config
 from .config import USER_AGENT
 
 log = logging.getLogger("artwork_fetcher")
@@ -160,6 +164,97 @@ def render_output_from_bytes(data: bytes, config: dict) -> Image.Image:
     with Image.open(BytesIO(data)) as im:
         im.load()
         return render_output(im, config)
+
+
+# ---------------------------------------------------------------------------
+# Art wall thumbnails
+# ---------------------------------------------------------------------------
+
+# The wall's whole performance story. Pointing a browser source at 188
+# full-resolution covers decodes to ~282MB of bitmap while the machine is also
+# encoding video; at 512px, the 18 visible tiles plus a small preload buffer
+# come to ~23MB, and that figure stays flat however big the library grows.
+#
+# Three buckets, snapped server-side so the cache cannot sprawl. WebP rather
+# than PNG because album art has no alpha to preserve: ~60KB a tile against
+# ~400KB, putting a whole 128-tile cache under 8MB.
+THUMB_SIZES = (256, 512, 1024)
+
+
+def snap_thumb_size(requested: int) -> int:
+    """Round a requested tile width up to the nearest cached bucket."""
+    for size in THUMB_SIZES:
+        if requested <= size:
+            return size
+    return THUMB_SIZES[-1]
+
+
+def make_thumbnail(src_path, size: int) -> bytes:
+    """
+    Square WebP thumbnail of a library image, centre-cropped to fill.
+
+    Cropping rather than letterboxing: a handful of library images are not
+    square (1280x720 grabs, 918x1000 scans) and a gapless mosaic with one
+    letterboxed tile in it reads as a broken tile.
+    """
+    with Image.open(src_path) as im:
+        im.load()
+        img = im.convert("RGB")
+
+    width, height = img.size
+    side = min(width, height)
+    if (width, height) != (side, side):
+        left = (width - side) // 2
+        top = (height - side) // 2
+        img = img.crop((left, top, left + side, top + side))
+    if img.size != (size, size):
+        img = img.resize((size, size), Image.Resampling.LANCZOS)
+
+    buf = BytesIO()
+    img.save(buf, "WEBP", quality=82, method=4)
+    return buf.getvalue()
+
+
+def thumbnail_path(digest: str, size: int) -> Path:
+    return config.THUMBS_DIR / f"{digest}_{size}.webp"
+
+
+def ensure_thumbnail(src_path, digest: str, size: int) -> Optional[Path]:
+    """
+    Path to the cached thumbnail for this image, generating it on first ask.
+    None if the source image cannot be read.
+
+    Generation is lazy by design: the first load of a wall assembles over a few
+    seconds as tiles finish, which is the intended reveal rather than a stall.
+    Browsers cap themselves at roughly six connections per host, so the burst
+    self-throttles and needs no queue here.
+    """
+    dest = thumbnail_path(digest, size)
+    if dest.exists():
+        return dest
+
+    try:
+        data = make_thumbnail(src_path, size)
+    except (OSError, ValueError) as e:
+        log.info("Thumbnail failed for %s: %s", src_path, e)
+        return None
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # Several connections can ask for the same tile at once. Each writes its own
+    # temp file and renames it into place, so no reader ever sees a partial one
+    # and whoever loses the race simply discards their copy.
+    tmp = dest.with_name(f"{dest.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, dest)
+    except OSError as e:
+        log.info("Thumbnail cache write failed for %s: %s", dest.name, e)
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+    return dest if dest.exists() else None
 
 
 def to_png_bytes(data_or_img) -> bytes:

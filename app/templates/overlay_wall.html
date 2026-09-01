@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Art wall</title>
+<style>
+  /* Transparent page for OBS browser source. Unlike the queue and now-playing
+     overlays this one polls nothing — the tile list is library data, fetched
+     once on load. Styling comes from the options in wall.json, so dashboard
+     changes go live without touching OBS. */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: transparent; overflow: hidden; height: 100%; }
+
+  #wall {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 6), 1fr);
+    /* Rows size to the square tile, never 1fr: a fractional row divides the
+       leftover height between the rows, and because the tiles keep their 1:1
+       ratio inside those taller rows, a gapless mosaic ends up with
+       transparent bands across it. Packing from the top instead leaves the
+       remainder as one strip at the bottom, which is what the streamer sizes
+       the browser source to remove. */
+    grid-auto-rows: auto;
+    align-content: start;
+    gap: var(--gap, 0px);
+    padding: var(--gap, 0px);
+    width: 100%;
+    height: 100%;
+  }
+
+  .tile {
+    position: relative;
+    aspect-ratio: 1;
+    overflow: hidden;
+    border-radius: var(--radius, 0px);
+    /* Assemble state: tiles start invisible and are revealed individually as
+       their thumbnail loads, in random order. */
+    opacity: 1;
+    transform: none;
+    transition: opacity .55s ease, transform .55s ease;
+  }
+  .tile.pre { opacity: 0; transform: scale(.94); }
+
+  /* Two stacked faces per tile so a swap cross-fades in place rather than
+     blanking. Only opacity and transform animate — never filter or box-shadow,
+     which is what actually melts OBS's Chromium across many elements. */
+  .face {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity var(--fade, 1.2s) ease;
+  }
+  .face.on { opacity: 1; }
+  .face img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  /* Ken Burns. Each face carries its own duration, direction and negative
+     delay, so no two tiles ever move in step — synchronised motion reads as a
+     page refresh rather than as life. */
+  body.drift .face.on img {
+    animation: drift var(--dur, 30s) ease-in-out infinite alternate;
+  }
+  @keyframes drift {
+    from { transform: scale(1) translate(0, 0); }
+    to   { transform: scale(1.06) translate(var(--dx, 1%), var(--dy, -1%)); }
+  }
+
+  body.breathe .tile {
+    animation: breathe var(--bdur, 24s) ease-in-out infinite alternate;
+  }
+  @keyframes breathe {
+    from { opacity: .85; }
+    to   { opacity: 1; }
+  }
+
+  /* Hero pulse: one tile lifts briefly, then settles. Off by default. */
+  .tile.hero { transform: scale(1.04); z-index: 2; }
+  .tile.hero .face.on { opacity: 1; }
+
+  /* Pick mode is the settings preview only — never a live browser source. */
+  body.pick .tile { cursor: pointer; }
+  body.pick .tile::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    box-shadow: inset 0 0 0 0 rgba(255,80,80,0);
+    transition: box-shadow .15s ease;
+  }
+  body.pick .tile:hover::after {
+    box-shadow: inset 0 0 0 3px rgba(255,80,80,.9);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tile, .face { transition: none; }
+    body.drift .face.on img, body.breathe .tile { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div id="wall"></div>
+<script>
+  const QS = {{ qs | tojson }};
+  const PICK = {{ pick | tojson }};
+  const wall = document.getElementById("wall");
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  let opts = {};
+  let pool = [];            // [{hash, title, artist}] — the whole eligible set
+  let tiles = [];           // { el, faces:[a,b], active, hash, revealed }
+  const counts = new Map(); // hash -> how many tiles currently show it
+  let tileSize = 512;
+  let swapTimer = null;
+  let heroTimer = null;
+
+  const take = h => counts.set(h, (counts.get(h) || 0) + 1);
+  const release = h => {
+    const n = (counts.get(h) || 0) - 1;
+    if (n > 0) counts.set(h, n); else counts.delete(h);
+  };
+
+  // Thumbnail bucket. The server snaps to the same three sizes, so asking for
+  // an odd width cannot sprawl the cache.
+  const bucket = px => (px <= 256 ? 256 : (px <= 512 ? 512 : 1024));
+  const tileUrl = (hash, size) => "/overlay/wall/tile?h=" + hash + "&s=" + size;
+
+  /*
+    Always choose the LEAST-SHOWN cover, not a random unused one.
+
+    On a healthy library the two are equivalent, because there is always
+    something at zero. On a thin one — fewer covers than grid slots — only this
+    version terminates: a random-unused picker would spin forever hunting for a
+    free cover that does not exist. It also spreads the unavoidable repeats
+    evenly on its own, so no explicit per-cover cap is needed.
+  */
+  function pick(excludeHash) {
+    if (!pool.length) return null;
+    let best = null;
+    let bestCount = Infinity;
+    const start = Math.floor(Math.random() * pool.length);
+    for (let i = 0; i < pool.length; i++) {
+      const cand = pool[(start + i) % pool.length];
+      if (cand.hash === excludeHash) continue;
+      const n = counts.get(cand.hash) || 0;
+      if (n < bestCount) {
+        bestCount = n;
+        best = cand;
+        if (n === 0) break;
+      }
+    }
+    return best;
+  }
+
+  function driftVars(face, seed) {
+    face.style.setProperty("--dur", (20 + (seed * 7) % 21) + "s");
+    face.style.setProperty("--dx", (((seed * 13) % 5) - 2) + "%");
+    face.style.setProperty("--dy", (((seed * 17) % 5) - 2) + "%");
+    face.style.animationDelay = "-" + ((seed * 3) % 19) + "s";
+  }
+
+  function makeFace(seed) {
+    const face = document.createElement("div");
+    face.className = "face";
+    const img = document.createElement("img");
+    img.alt = "";
+    img.decoding = "async";
+    face.appendChild(img);
+    driftVars(img, seed);
+    return face;
+  }
+
+  function makeTile(entry, seed) {
+    const el = document.createElement("div");
+    el.className = "tile pre";
+    el.style.setProperty("--bdur", (18 + (seed * 11) % 15) + "s");
+    el.style.animationDelay = "-" + ((seed * 5) % 17) + "s";
+
+    const a = makeFace(seed);
+    const b = makeFace(seed + 3);
+    el.appendChild(a);
+    el.appendChild(b);
+
+    const tile = { el: el, faces: [a, b], active: 0, hash: entry.hash,
+                   revealed: false };
+
+    const img = a.querySelector("img");
+    img.addEventListener("load", function () {
+      a.classList.add("on");
+      revealTile(tile);
+    });
+    // A tile whose thumbnail cannot be built should not sit there as a hole.
+    img.addEventListener("error", function () { replaceTile(tile); });
+    img.src = tileUrl(entry.hash, tileSize);
+
+    if (PICK) {
+      el.title = (entry.artist ? entry.artist + " — " : "") + entry.title
+                 + "\nClick to hide this cover";
+      el.addEventListener("click", function () { hideTile(tile); });
+    }
+
+    take(entry.hash);
+    return tile;
+  }
+
+  /*
+    Reveal is per tile, on its own image load, with a random jitter — never row
+    by row. One mechanism, two speeds: on a cold thumbnail cache the tiles land
+    as they finish generating, so the wall assembles over a few seconds; once
+    cached they all load at once and the jitter alone scatters them.
+  */
+  function revealTile(tile) {
+    if (tile.revealed) return;
+    tile.revealed = true;
+    const stagger = (opts.assemble && !reduced) ? 40 + Math.random() * 700 : 0;
+    setTimeout(function () { tile.el.classList.remove("pre"); }, stagger);
+  }
+
+  function swapFace(tile, entry, onDone) {
+    const incoming = tile.faces[1 - tile.active];
+    const outgoing = tile.faces[tile.active];
+    const img = incoming.querySelector("img");
+
+    const apply = function () {
+      incoming.classList.add("on");
+      outgoing.classList.remove("on");
+      release(tile.hash);
+      take(entry.hash);
+      tile.hash = entry.hash;
+      tile.active = 1 - tile.active;
+      if (onDone) onDone();
+    };
+    img.onload = apply;
+    img.onerror = null;
+    img.src = tileUrl(entry.hash, tileSize);
+  }
+
+  function swap() {
+    if (!tiles.length || pool.length < 2) return;
+    const tile = tiles[Math.floor(Math.random() * tiles.length)];
+    const next = pick(tile.hash);
+    // No surplus: every cover is already on screen, so there is nothing to
+    // swap in. The wall simply holds — see the headroom note in the settings.
+    if (!next || next.hash === tile.hash) return;
+    swapFace(tile, next);
+  }
+
+  function replaceTile(tile) {
+    const next = pick(tile.hash);
+    if (!next || next.hash === tile.hash) {
+      tile.el.remove();
+      const i = tiles.indexOf(tile);
+      if (i >= 0) tiles.splice(i, 1);
+      release(tile.hash);
+      return;
+    }
+    swapFace(tile, next, function () { revealTile(tile); });
+  }
+
+  function hideTile(tile) {
+    const hash = tile.hash;
+    fetch("/overlay/wall/exclude", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hash: hash, action: "hide" })
+    }).then(function () {
+      pool = pool.filter(function (p) { return p.hash !== hash; });
+      tiles.filter(function (t) { return t.hash === hash; })
+           .forEach(replaceTile);
+    }).catch(function () { /* dashboard busy — leave the tile alone */ });
+  }
+
+  function layout() {
+    const cols = Math.max(1, parseInt(opts.columns, 10) || 6);
+    const gap = Math.max(0, parseInt(opts.gap, 10) || 0);
+    const w = document.documentElement.clientWidth;
+    const h = document.documentElement.clientHeight;
+    // Tiles are square at 1fr, so the row count is whatever fits the browser
+    // source's height. One setting covers landscape and portrait, and it
+    // survives the user resizing the source in OBS.
+    const tileW = (w - gap * (cols + 1)) / cols;
+    const rows = tileW > 0 ? Math.max(1, Math.floor((h - gap) / (tileW + gap))) : 1;
+    return { cols: cols, rows: rows, want: cols * rows, tileW: tileW };
+  }
+
+  function build() {
+    const box = layout();
+    wall.style.setProperty("--cols", box.cols);
+
+    const nextSize = bucket(Math.ceil(box.tileW));
+    const sizeChanged = nextSize !== tileSize;
+    tileSize = nextSize;
+
+    while (tiles.length > box.want) {
+      const gone = tiles.pop();
+      release(gone.hash);
+      gone.el.remove();
+    }
+    while (tiles.length < box.want) {
+      const entry = pick(null);
+      if (!entry) break;               // pool exhausted (empty library)
+      const tile = makeTile(entry, tiles.length);
+      tiles.push(tile);
+      wall.appendChild(tile.el);
+    }
+    if (sizeChanged) {
+      tiles.forEach(function (t) {
+        t.faces[t.active].querySelector("img").src = tileUrl(t.hash, tileSize);
+      });
+    }
+  }
+
+  function applyStyle() {
+    wall.style.setProperty("--cols", opts.columns);
+    wall.style.setProperty("--gap", (opts.gap || 0) + "px");
+    wall.style.setProperty("--radius", (opts.radius || 0) + "px");
+    wall.style.setProperty("--fade", ((opts.swap_fade || 1200) / 1000) + "s");
+    document.body.classList.toggle("drift", !!opts.drift && !reduced);
+    document.body.classList.toggle("pick", !!PICK);
+    // Breathe animates the same opacity the assemble reveal transitions, and an
+    // animation beats a transition — so it is switched on only once the tiles
+    // have finished landing, or it would swallow the reveal entirely.
+    if (opts.breathe && !reduced) {
+      setTimeout(function () { document.body.classList.add("breathe"); }, 1600);
+    }
+  }
+
+  function startTimers() {
+    if (swapTimer) clearInterval(swapTimer);
+    if (heroTimer) clearInterval(heroTimer);
+    const interval = parseInt(opts.swap_interval, 10) || 0;
+    if (interval > 0 && !reduced) {
+      swapTimer = setInterval(swap, interval * 1000);
+    }
+    const hero = parseInt(opts.hero_interval, 10) || 0;
+    if (hero > 0 && !reduced) {
+      heroTimer = setInterval(function () {
+        if (!tiles.length) return;
+        const t = tiles[Math.floor(Math.random() * tiles.length)];
+        t.el.classList.add("hero");
+        setTimeout(function () { t.el.classList.remove("hero"); }, 2600);
+      }, hero * 1000);
+    }
+  }
+
+  let resizeTimer = null;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(build, 200);
+  });
+
+  (async function start() {
+    try {
+      const resp = await fetch("/overlay/wall.json" + (QS ? "?" + QS : ""));
+      if (!resp.ok) return;
+      const data = await resp.json();
+      opts = data.options || {};
+      pool = data.tiles || [];
+    } catch (e) {
+      return;   // dashboard down — render nothing rather than an error on stream
+    }
+    applyStyle();
+    // No artwork at all: draw nothing. An OBS source must never render a
+    // message; the prompt to run Sync and Find artwork lives in the settings
+    // page, where the streamer is actually looking.
+    if (!pool.length) return;
+    build();
+    startTimers();
+  })();
+</script>
+</body>
+</html>

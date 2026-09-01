@@ -17,6 +17,7 @@ from PIL import Image
 from . import config, imaging, sources
 from .library import (
     STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_REJECTED_ALL, STATUS_UNVERIFIED,
+    USABLE_STATUSES,
 )
 
 log = logging.getLogger("artwork_fetcher")
@@ -24,9 +25,11 @@ log = logging.getLogger("artwork_fetcher")
 # Order the dashboard reject-cycle pulls fresh candidates from.
 SOURCE_ORDER = ("itunes", "lastfm", "musicbrainz")
 
-# Library statuses whose stored image the runtime is willing to display, best
-# first. rejected_all is excluded (user rejected everything → go live/fallback).
-USABLE_STATUSES = (STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_UNVERIFIED)
+# USABLE_STATUSES (imported above) is the set of library statuses whose stored
+# image the runtime is willing to display. It moved to library.py so the art
+# wall's tile pool can apply the same test without importing this module and
+# creating a cycle; it is imported here because callers already reach for it by
+# this name (dashboard's _OVERLAY_STATUSES).
 
 
 # Endpoints something polls on a timer: both overlays (every 5s each, per OBS
@@ -35,8 +38,12 @@ USABLE_STATUSES = (STATUS_CONFIRMED, STATUS_PROPOSED, STATUS_UNVERIFIED)
 # pages. Werkzeug logs a line per request, and measured on 2026-08-31 these
 # were 79% of a 10MB log — ~2,200 lines an hour saying nothing happened, which
 # pushes real history out of the rotation window.
+#
+# The art wall's tile route is the same shape: one request per tile, and since
+# the setup guidance is to tick OBS's "Shutdown source when not visible", that
+# whole burst repeats every time the streamer cuts to that scene.
 _POLLED_PATHS = ("/overlay/queue.json", "/overlay/current.json",
-                 "/api/runtime/status", "/img?")
+                 "/api/runtime/status", "/img?", "/overlay/wall/tile")
 
 # The status code in a werkzeug access line: '"GET /x HTTP/1.1" 200 -'.
 _ACCESS_STATUS_RE = re.compile(r'"\s+(\d{3})\s')

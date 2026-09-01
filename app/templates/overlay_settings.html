@@ -2,7 +2,13 @@
 {% set active = 'overlay' %}
 {% block title %}Overlays{% endblock %}
 {% block content %}
-<div class="panel">
+<nav class="subnav">
+  <a href="#queue-overlay">Queue overlay</a>
+  <a href="#current-overlay">Now playing</a>
+  <a href="#wall">Art wall</a>
+  <a href="#promo">Empty-queue card</a>
+</nav>
+<div class="panel" id="queue-overlay">
   <h1>Queue overlay</h1>
   {% if request.args.get('saved') == '1' %}<div class="flash ok">Queue overlay settings saved.</div>{% endif %}
 
@@ -235,6 +241,126 @@
   </div>
 </div>
 
+<div class="panel" id="wall">
+  <h1>Art wall</h1>
+  {% if request.args.get('saved') == 'wall' %}<div class="flash ok">Art wall settings saved.</div>{% endif %}
+
+  {% if wall_pool == 0 %}
+  <div class="flash warn">
+    <strong>No artwork to show yet.</strong> The wall draws on your local
+    artwork library. Go to <a href="{{ url_for('songs_page') }}">Songs</a>,
+    run <em>Sync songlist</em> and then <em>Find artwork</em> — the wall will
+    fill itself in as covers arrive. Until then the browser source renders
+    nothing rather than an error, so it is safe to add to a scene now.
+  </div>
+  {% endif %}
+
+  <div class="flash welcome">
+    <strong>Add to OBS:</strong> create a <em>Browser</em> source, tick
+    <em>Local file</em>, and point it at the loader below. Size it to the area
+    you want filled — the wall fits itself to whatever you give it.
+    <strong>Tick <em>Shutdown source when not visible</em></strong> on this one:
+    it stops the animation using the CPU behind a scene you aren't showing, and
+    it means the wall reshuffles and replays its reveal every time you cut back
+    to that scene.
+    <div class="row" style="margin-top:.5em">
+      <input type="text" id="wall-loader" readonly value="{{ wall_loader }}"
+             style="flex:1" onclick="this.select()">
+      <button type="button" class="secondary copy-btn" data-copy="wall-loader">Copy path</button>
+    </div>
+    <div class="row" style="margin-top:.4em">
+      <input type="text" id="wall-url" readonly value="{{ wall_url }}"
+             style="flex:1" onclick="this.select()">
+      <button type="button" class="secondary copy-btn" data-copy="wall-url">Copy URL</button>
+    </div>
+  </div>
+
+  <div class="overlay-layout overlay-layout-stacked">
+    <div class="overlay-preview wall-preview">
+      <h2>Preview</h2>
+      <iframe id="wall-preview" src="{{ url_for('overlay_wall_page', pick=1) }}"
+              title="Art wall preview"></iframe>
+      <p class="muted">Shown over a checkerboard — in OBS the background is
+        transparent. <strong>Click any cover to hide it</strong> from the wall;
+        hidden covers stay in your library and are only hidden here.</p>
+    </div>
+
+    <form method="post" action="{{ url_for('save_overlay_wall_settings') }}" class="form">
+      <fieldset>
+        <legend>Grid</legend>
+        <label>Columns
+          <input type="number" id="wall-cols" name="columns"
+                 value="{{ wall_opts.columns }}" min="2" max="12"></label>
+        <p class="muted" id="wall-headroom"></p>
+        <div class="grid">
+          <label>Gap between tiles (px)
+            <input type="number" name="gap" value="{{ wall_opts.gap }}" min="0" max="64"></label>
+          <label>Corner radius (px)
+            <input type="number" name="radius" value="{{ wall_opts.radius }}" min="0" max="64"></label>
+        </div>
+        <p class="muted">Gap 0 with radius 0 is a gapless mosaic — tiles touch,
+          filling the source like wallpaper. Raise both for a gallery of
+          separate covers.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Which covers</legend>
+        <label>Include
+          <select name="filter">
+            <option value="songlist" {{ 'selected' if wall_opts.filter == 'songlist' }}>
+              Only songs still in my songlist</option>
+            <option value="all" {{ 'selected' if wall_opts.filter == 'all' }}>
+              Everything in my artwork library</option>
+          </select></label>
+        <p class="muted">Confirmed, proposed and live-grabbed artwork all count —
+          you don't have to review your library before the wall looks good.</p>
+        <label class="checkbox"><input type="checkbox" name="dedupe"
+               {{ 'checked' if wall_opts.dedupe }}>
+          Show each cover only once (several songs often share one album)</label>
+        {% if wall_opts.exclude %}
+        <div class="wall-hidden" style="margin-top:.8em">
+          <span class="muted">{{ wall_opts.exclude | length }} cover(s) hidden.</span>
+          <label class="checkbox"><input type="checkbox" name="clear_exclude">
+            Show them all again on save</label>
+        </div>
+        {% endif %}
+      </fieldset>
+
+      <fieldset>
+        <legend>Motion</legend>
+        <div class="grid">
+          <label>Swap a tile every (seconds)
+            <input type="number" name="swap_interval"
+                   value="{{ wall_opts.swap_interval }}" min="0" max="3600"></label>
+          <label>Cross-fade (ms)
+            <input type="number" name="swap_fade"
+                   value="{{ wall_opts.swap_fade }}" min="0" max="10000"></label>
+        </div>
+        <p class="muted">0 seconds holds the wall still. The swap needs spare
+          covers to work: if every cover you have is already on screen there is
+          nothing to bring in, and the wall stays put whatever this says.</p>
+        <label class="checkbox"><input type="checkbox" name="drift"
+               {{ 'checked' if wall_opts.drift }}>
+          Slow drift — each cover gently scales and pans on its own cycle</label>
+        <label class="checkbox"><input type="checkbox" name="assemble"
+               {{ 'checked' if wall_opts.assemble }}>
+          Assemble on load — covers fade in one by one, in random places</label>
+        <label class="checkbox"><input type="checkbox" name="breathe"
+               {{ 'checked' if wall_opts.breathe }}>
+          Breathe — tiles drift slightly in and out of full brightness</label>
+        <label>Spotlight one cover every (seconds, 0 = never)
+          <input type="number" name="hero_interval"
+                 value="{{ wall_opts.hero_interval }}" min="0" max="3600"></label>
+      </fieldset>
+
+      <button type="submit" class="primary">Save art wall settings</button>
+      <p class="muted">Per-source overrides work here too, e.g.
+        <code>?cols=3&amp;gap=8&amp;radius=6</code> — handy for running a tall
+        portrait wall and a wide one from the same settings.</p>
+    </form>
+  </div>
+</div>
+
 <div class="panel" id="promo">
   <h1>Empty-queue card</h1>
   {% if request.args.get('saved') == 'promo' %}<div class="flash ok">Empty-queue card saved.</div>{% endif %}
@@ -317,6 +443,38 @@ document.querySelectorAll('.promo-demo').forEach(sel => {
       + (sel.value ? '?promo_demo=' + sel.value + '&promo=1' : '');
   });
 });
+
+// Art wall headroom. The tile swap needs SPARE covers, not merely enough: with
+// exactly as many covers as tiles every one is already on screen, so there is
+// nothing to bring in and the wall sits still however short the interval. So
+// report the ratio rather than a pass/fail.
+(function () {
+  const cols = document.getElementById('wall-cols');
+  const out = document.getElementById('wall-headroom');
+  if (!cols || !out) return;
+  const pool = {{ wall_pool }};
+
+  function update() {
+    const c = Math.max(2, Math.min(12, parseInt(cols.value, 10) || 6));
+    // Rows a 16:9 source fits at square tiles — the shape most scenes use.
+    const tiles = c * Math.max(1, Math.floor(c * 9 / 16));
+    if (!pool) { out.textContent = 'No covers in your library yet.'; return; }
+    const ratio = pool / tiles;
+    let verdict;
+    if (tiles > pool) {
+      verdict = 'more tiles than covers, so some will appear more than once';
+    } else if (ratio < 1.5) {
+      verdict = 'only just enough spares, so swaps will feel repetitive';
+    } else {
+      verdict = ratio.toFixed(1) + '× more covers than tiles — plenty to swap in';
+    }
+    out.textContent = pool + ' covers available. On a 16:9 source that is '
+      + c + ' × ' + Math.floor(c * 9 / 16) + ' = ' + tiles + ' tiles: ' + verdict + '.';
+  }
+
+  cols.addEventListener('input', update);
+  update();
+})();
 
 document.querySelectorAll('.copy-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
