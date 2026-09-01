@@ -165,7 +165,14 @@ DEFAULT_CONFIG = {
         "filter": "songlist",    # songlist = only songs still in the songlist
         "dedupe": True,          # one tile per distinct image (see content_hash)
         "exclude": [],           # content hashes the user has hidden
+        # shuffle | artist | lightness | hue. A sorted wall is not a fixed
+        # picture: the page opens on a random stretch of the sequence, so it
+        # looks different each time a scene starts while the order holds.
         "order": "shuffle",
+        # Which way a sorted sequence runs across the grid: "row" fills left to
+        # right (a gradient reads as horizontal bands), "column" fills top to
+        # bottom (vertical bands). Ignored when order is shuffle.
+        "sort_axis": "row",
         # Motion. The swap is what makes the wall feel alive: every
         # swap_interval seconds one tile cross-fades to a cover that is not
         # currently on screen. It needs SURPLUS to work — with exactly as many

@@ -14,6 +14,7 @@ gone is treated as needing art again (``has_image`` returns False).
 
 import hashlib
 import json
+import random
 import re
 import threading
 import unicodedata
@@ -21,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from . import config
+from . import config, imaging
 
 # Status values used in manifest entries.
 STATUS_PROPOSED = "proposed"        # auto-fetched, awaiting review
@@ -211,6 +212,52 @@ def sanitize_filename(name: str, max_length: int = 120) -> str:
     return name or "untitled"
 
 
+WALL_ORDERS = ("shuffle", "artist", "lightness", "hue")
+
+
+def order_tiles(lib, tiles: list, order: str) -> list:
+    """
+    Arrange the art wall's tiles. Returns a new list, leaving the input alone.
+
+    Only the sequence is decided here. The client takes a random contiguous
+    slice of it, so a sorted wall still opens on a different stretch of the
+    library every time a scene starts without the ordering itself ever
+    breaking — and its swaps stay inside a window around each tile's place in
+    this list, so a gradient does not speckle as covers cycle.
+    """
+    if order == "artist":
+        return sorted(tiles, key=lambda t: (normalize_text(t.get("artist", "")),
+                                            normalize_text(t.get("title", ""))))
+
+    if order in ("lightness", "hue"):
+        paths = lib.paths_by_hash()
+        blank = {"hue": 0, "chroma": 0.0, "light": 0.0}
+        profiled = []
+        for tile in tiles:
+            path = paths.get(tile["hash"])
+            profile = imaging.colour_profile(path, tile["hash"]) if path else blank
+            profiled.append((tile, profile))
+
+        if order == "lightness":
+            profiled.sort(key=lambda tp: tp[1]["light"])
+        else:
+            # Hue is a circle, so a plain 0-360 sweep runs red → orange →
+            # yellow → green → cyan → blue → violet and back toward red, which
+            # is the warm-to-cool gradient. Covers with no usable hue are not
+            # scattered at whatever their noise peaked at: they form their own
+            # band, ordered by lightness, ahead of the colour sweep.
+            profiled.sort(key=lambda tp: (
+                tp[1]["chroma"] > imaging.CHROMA_FLOOR,
+                tp[1]["hue"] if tp[1]["chroma"] > imaging.CHROMA_FLOOR
+                else tp[1]["light"],
+            ))
+        return [tile for tile, _ in profiled]
+
+    shuffled = list(tiles)
+    random.shuffle(shuffled)
+    return shuffled
+
+
 def image_filename(title: str, artist: str) -> str:
     """Human-readable ``{artist} - {title}.png`` filename (sanitised)."""
     artist_part = sanitize_filename(artist) if artist else "Unknown Artist"
@@ -381,6 +428,25 @@ class Library:
                 groups[group] = tile
             tiles.append(tile)
         return tiles
+
+    def paths_by_hash(self) -> dict:
+        """
+        ``{content hash: path}`` for every image in the library, in one pass.
+
+        Ordering needs the file behind every tile at once, and calling
+        ``path_for_hash`` per tile would rescan the manifest each time.
+        """
+        index = {}
+        for entry in self._manifest.values():
+            if not isinstance(entry, dict):
+                continue
+            path = self.image_path(entry)
+            if not path or not path.exists():
+                continue
+            digest = content_hash(path)
+            if digest:
+                index.setdefault(digest, path)
+        return index
 
     def path_for_hash(self, digest: str) -> Optional[Path]:
         """

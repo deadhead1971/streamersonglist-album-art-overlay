@@ -109,12 +109,18 @@
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   let opts = {};
-  let pool = [];            // [{hash, title, artist}] — the whole eligible set
-  let tiles = [];           // { el, faces:[a,b], active, hash, revealed }
+  let ordered = [];         // [{hash, title, artist, songs}] in display order
+  let tiles = [];           // { el, faces:[a,b], active, hash, band, revealed }
   const counts = new Map(); // hash -> how many tiles currently show it
   let tileSize = 512;
   let swapTimer = null;
   let heroTimer = null;
+  let gridCols = 6;
+  let gridRows = 3;
+  // Where in the sequence this page opens. A sorted wall is a sequence, not a
+  // fixed picture: starting somewhere random means the scene looks different
+  // every time OBS brings it up while the ordering itself never breaks.
+  let offset = 0;
 
   const take = h => counts.set(h, (counts.get(h) || 0) + 1);
   const release = h => {
@@ -128,22 +134,23 @@
   const tileUrl = (hash, size) => "/overlay/wall/tile?h=" + hash + "&s=" + size;
 
   /*
-    Always choose the LEAST-SHOWN cover, not a random unused one.
+    The least-shown cover from inside one slot's band (see bandFor below).
 
-    On a healthy library the two are equivalent, because there is always
-    something at zero. On a thin one — fewer covers than grid slots — only this
-    version terminates: a random-unused picker would spin forever hunting for a
-    free cover that does not exist. It also spreads the unavoidable repeats
-    evenly on its own, so no explicit per-cover cap is needed.
+    Least-shown rather than random-unused matters on a thin library: with fewer
+    covers than grid slots, a random-unused picker would spin forever hunting
+    for a spare that does not exist. This terminates, and spreads the
+    unavoidable repeats evenly without needing a per-cover cap.
   */
-  function pick(excludeHash) {
-    if (!pool.length) return null;
+  function pickInBand(band, excludeHash) {
+    const total = ordered.length;
+    if (!total) return null;
+    const size = Math.max(1, band.hi - band.lo);
+    const jitter = Math.floor(Math.random() * size);
     let best = null;
     let bestCount = Infinity;
-    const start = Math.floor(Math.random() * pool.length);
-    for (let i = 0; i < pool.length; i++) {
-      const cand = pool[(start + i) % pool.length];
-      if (cand.hash === excludeHash) continue;
+    for (let k = 0; k < size; k++) {
+      const cand = ordered[(band.lo + ((jitter + k) % size)) % total];
+      if (!cand || cand.hash === excludeHash) continue;
       const n = counts.get(cand.hash) || 0;
       if (n < bestCount) {
         bestCount = n;
@@ -153,6 +160,40 @@
     }
     return best;
   }
+
+  /*
+    The stretch of the sequence a grid slot draws from, and never leaves.
+
+    The grid samples the WHOLE sequence rather than a run of neighbours: 18
+    consecutive covers out of a 127-cover lightness sort are all much the same
+    brightness, so a contiguous slice shows no gradient at all. Spread across
+    every cover instead and the darkest sits at one end, the lightest at the
+    other, with each slot owning about seven covers in between.
+
+    That band is also what makes swapping safe. A tile can only ever swap to
+    another cover from its own band, so the gradient holds its shape however
+    long the wall runs, instead of speckling back to random within a minute.
+    Shuffled order has no sequence to protect, so its band is the whole pool
+    and behaviour is unchanged.
+  */
+  function bandFor(p, want) {
+    const total = ordered.length;
+    if (opts.order === "shuffle" || !total) return { lo: 0, hi: total };
+    const lo = Math.floor(p * total / want);
+    const hi = Math.max(lo + 1, Math.floor((p + 1) * total / want));
+    return { lo: lo, hi: Math.min(hi, total) };
+  }
+
+  /*
+    Where a grid slot sits in the sorted sequence. CSS grid fills row by row,
+    so slot p is already the row-major answer; column-major transposes it, and
+    a gradient then reads as vertical bands rather than horizontal ones.
+  */
+  function sequenceIndex(p) {
+    if (opts.order === "shuffle" || opts.sort_axis !== "column") return p;
+    return (p % gridCols) * gridRows + Math.floor(p / gridCols);
+  }
+
 
   function driftVars(face, seed) {
     face.style.setProperty("--dur", (20 + (seed * 7) % 21) + "s");
@@ -193,7 +234,7 @@
     return head + "\nClick to hide this cover";
   }
 
-  function makeTile(entry, seed) {
+  function makeTile(entry, seed, band) {
     const el = document.createElement("div");
     el.className = "tile pre";
     el.style.setProperty("--bdur", (18 + (seed * 11) % 15) + "s");
@@ -204,8 +245,11 @@
     el.appendChild(a);
     el.appendChild(b);
 
+    // ``band`` is the stretch of the sequence this slot owns. It never moves,
+    // and swaps may only draw from inside it — that is what keeps a sorted
+    // wall sorted.
     const tile = { el: el, faces: [a, b], active: 0, hash: entry.hash,
-                   revealed: false };
+                   band: band, revealed: false };
 
     const img = a.querySelector("img");
     img.addEventListener("load", function () {
@@ -259,17 +303,16 @@
   }
 
   function swap() {
-    if (!tiles.length || pool.length < 2) return;
+    if (!tiles.length || ordered.length < 2) return;
     const tile = tiles[Math.floor(Math.random() * tiles.length)];
-    const next = pick(tile.hash);
-    // No surplus: every cover is already on screen, so there is nothing to
-    // swap in. The wall simply holds — see the headroom note in the settings.
+    const next = pickInBand(tile.band, tile.hash);
+    // No surplus in this slot's band: nothing to bring in, so the tile holds.
     if (!next || next.hash === tile.hash) return;
     swapFace(tile, next);
   }
 
   function replaceTile(tile) {
-    const next = pick(tile.hash);
+    const next = pickInBand(tile.band, tile.hash);
     if (!next || next.hash === tile.hash) {
       tile.el.remove();
       const i = tiles.indexOf(tile);
@@ -287,9 +330,13 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ hash: hash, action: "hide" })
     }).then(function () {
-      pool = pool.filter(function (p) { return p.hash !== hash; });
-      tiles.filter(function (t) { return t.hash === hash; })
-           .forEach(replaceTile);
+      ordered = ordered.filter(function (p) { return p.hash !== hash; });
+      // Every later tile's place in the sequence shifts when an entry leaves
+      // it, so redraw rather than patch. This only runs in the preview.
+      tiles.forEach(function (t) { t.el.remove(); });
+      tiles = [];
+      counts.clear();
+      build();
     }).catch(function () { /* dashboard busy — leave the tile alone */ });
   }
 
@@ -308,28 +355,47 @@
 
   function build() {
     const box = layout();
-    wall.style.setProperty("--cols", box.cols);
+    const shapeChanged = box.cols !== gridCols || box.rows !== gridRows
+                         || tiles.length !== box.want;
+    gridCols = box.cols;
+    gridRows = box.rows;
+    wall.style.setProperty("--cols", gridCols);
 
     const nextSize = bucket(Math.ceil(box.tileW));
     const sizeChanged = nextSize !== tileSize;
     tileSize = nextSize;
 
-    while (tiles.length > box.want) {
-      const gone = tiles.pop();
-      release(gone.hash);
-      gone.el.remove();
+    if (!shapeChanged) {
+      if (sizeChanged) {
+        tiles.forEach(function (t) {
+          t.faces[t.active].querySelector("img").src = tileUrl(t.hash, tileSize);
+        });
+      }
+      return;
     }
-    while (tiles.length < box.want) {
-      const entry = pick(null);
-      if (!entry) break;               // pool exhausted (empty library)
-      const tile = makeTile(entry, tiles.length);
+
+    // Position carries meaning once the wall is ordered, so a changed grid is a
+    // different arrangement rather than a few tiles appended to the end.
+    tiles.forEach(function (t) { t.el.remove(); });
+    tiles = [];
+    counts.clear();
+
+    const total = ordered.length;
+    if (!total) return;
+
+    // Which cover each band opens on. The bands themselves are fixed, so this
+    // varies the picture without touching the order: the same gradient, drawn
+    // from different records every time the scene starts.
+    offset = Math.floor(Math.random() * total);
+
+    for (let p = 0; p < box.want; p++) {
+      const band = bandFor(sequenceIndex(p), box.want);
+      const size = Math.max(1, band.hi - band.lo);
+      const entry = ordered[(band.lo + (offset % size)) % total];
+      if (!entry) break;
+      const tile = makeTile(entry, p, band);
       tiles.push(tile);
       wall.appendChild(tile.el);
-    }
-    if (sizeChanged) {
-      tiles.forEach(function (t) {
-        t.faces[t.active].querySelector("img").src = tileUrl(t.hash, tileSize);
-      });
     }
   }
 
@@ -378,7 +444,7 @@
       if (!resp.ok) return;
       const data = await resp.json();
       opts = data.options || {};
-      pool = data.tiles || [];
+      ordered = data.tiles || [];
     } catch (e) {
       return;   // dashboard down — render nothing rather than an error on stream
     }
@@ -386,7 +452,7 @@
     // No artwork at all: draw nothing. An OBS source must never render a
     // message; the prompt to run Sync and Find artwork lives in the settings
     // page, where the streamer is actually looking.
-    if (!pool.length) return;
+    if (!ordered.length) return;
     build();
     startTimers();
   })();

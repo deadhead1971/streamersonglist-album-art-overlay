@@ -55,6 +55,7 @@
     "dedupe": true,
     "exclude": [],
     "order": "shuffle",
+    "sort_axis": "row",
     "swap_interval": 4,
     "swap_fade": 1200,
     "drift": true,

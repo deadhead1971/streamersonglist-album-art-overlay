@@ -9,7 +9,6 @@ request handlers never block on it.
 import io
 import json
 import logging
-import random
 import socket
 import subprocess
 import sys
@@ -24,7 +23,9 @@ from flask import (
 )
 from PIL import Image
 
-from . import __version__, artwork, config, imaging, runtime, songlist, updates
+from . import (
+    __version__, artwork, config, imaging, library, runtime, songlist, updates,
+)
 from .library import (
     Library, STATUS_PROPOSED, STATUS_UNVERIFIED,
     normalize_key,
@@ -846,6 +847,8 @@ def overlay_current_options(cfg: dict, args) -> dict:
 
 
 _WALL_FILTERS = ("songlist", "all")
+_WALL_ORDERS = library.WALL_ORDERS
+_WALL_AXES = ("row", "column")
 
 _WALL_BOOL_KEYS = {
     "dedupe": "dedupe",
@@ -889,6 +892,16 @@ def wall_options(cfg: dict, args) -> dict:
                 pass
     if args.get("filter") in _WALL_FILTERS:
         opts["filter"] = args.get("filter")
+    if args.get("order") in _WALL_ORDERS:
+        opts["order"] = args.get("order")
+    if args.get("axis") in _WALL_AXES:
+        opts["sort_axis"] = args.get("axis")
+    # An unknown order from a hand-edited config would otherwise fall through
+    # to "no sorting at all", which looks like the setting being ignored.
+    if opts.get("order") not in _WALL_ORDERS:
+        opts["order"] = "shuffle"
+    if opts.get("sort_axis") not in _WALL_AXES:
+        opts["sort_axis"] = "row"
     # ``source`` is reserved for a future live-queue mode. Coerce anything else
     # back rather than letting a stale config or a typo render an empty wall.
     if opts.get("source") != "library":
@@ -896,16 +909,20 @@ def wall_options(cfg: dict, args) -> dict:
     return opts
 
 
-def wall_tiles(cfg: dict, opts: dict) -> list:
-    """The tile pool for these options, shuffled if that is the chosen order."""
-    tiles = Library().tile_pool(
+def wall_pool(cfg: dict, opts: dict, lib=None) -> list:
+    """The eligible tiles for these options, in no particular order."""
+    return (lib or Library()).tile_pool(
         songlist_only=(opts.get("filter") == "songlist"),
         exclude=opts.get("exclude") or (),
         dedupe=bool(opts.get("dedupe", True)),
     )
-    if opts.get("order") == "shuffle":
-        random.shuffle(tiles)
-    return tiles
+
+
+def wall_tiles(cfg: dict, opts: dict) -> list:
+    """The tile pool arranged into the configured order."""
+    lib = Library()
+    return library.order_tiles(lib, wall_pool(cfg, opts, lib),
+                               opts.get("order", "shuffle"))
 
 
 def _resolve_art(lib: Library, title: str, artist: str) -> str:
@@ -1239,7 +1256,9 @@ def overlay_settings_page():
     # library the first time costs a second or so; it is memoised per file after
     # that, and this is a page load, never a request the overlays wait on.
     wall_opts = wall_options(cfg, {})
-    wall_pool = len(wall_tiles(cfg, wall_opts))
+    # Only the count is needed here, so skip the ordering pass — colour sorts
+    # profile every cover, which is wasted work for a number.
+    wall_count = len(wall_pool(cfg, wall_opts))
 
     # Hidden covers are shown back as thumbnails so they can be restored one at
     # a time. They are excluded from the pool by definition, so look them up
@@ -1266,11 +1285,12 @@ def overlay_settings_page():
                            promo=cfg.get("promo", {}),
                            has_avatar=bool(_streamer_avatar(cfg)),
                            layouts=_CURRENT_LAYOUTS,
-                           wall_opts=wall_opts, wall_pool=wall_pool,
+                           wall_opts=wall_opts, wall_pool=wall_count,
                            wall_hidden=wall_hidden,
                            wall_url=url_for("overlay_wall_page", _external=True),
                            wall_loader=str(loader_dir / "overlay_wall.html"),
-                           wall_filters=_WALL_FILTERS,
+                           wall_filters=_WALL_FILTERS, wall_orders=_WALL_ORDERS,
+                           wall_axes=_WALL_AXES,
                            overlay_url=overlay_url, presets=_OVERLAY_PRESETS,
                            animations=_OVERLAY_ANIMATIONS, speeds=_OVERLAY_SPEEDS)
 
@@ -1373,6 +1393,10 @@ def save_overlay_wall_settings():
             opts[key] = defaults[key]
     filt = form.get("filter", "songlist")
     opts["filter"] = filt if filt in _WALL_FILTERS else "songlist"
+    order = form.get("order", "shuffle")
+    opts["order"] = order if order in _WALL_ORDERS else "shuffle"
+    axis = form.get("sort_axis", "row")
+    opts["sort_axis"] = axis if axis in _WALL_AXES else "row"
     # ``exclude`` is deliberately absent from this form: hiding and restoring
     # happen immediately via /overlay/wall/exclude, so saving these settings
     # must leave the list exactly as it found it.

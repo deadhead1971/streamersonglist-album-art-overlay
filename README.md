@@ -209,6 +209,23 @@ from your library, each tile drifts very slowly on its own cycle, and covers
 fade in one at a time in random places when the scene starts. All of it is
 adjustable, and setting the swap interval to 0 holds it still.
 
+**Arrangement.** Shuffled is the default, but the wall can also lay your covers
+out in order:
+
+- **Dark to light** — a brightness gradient across the grid. Works on any
+  library, and it is the one that looks most deliberate.
+- **By colour** — warm reds and oranges through to cool blues, with
+  black-and-white sleeves grouped in their own band. How well this reads
+  depends on your library: record sleeves cluster at the warm end, so expect a
+  warm-to-cool sweep rather than a full rainbow.
+- **By artist** — an artist's covers sit together.
+
+Choose whether the order **runs across in rows** or **down in columns** —
+horizontal or vertical bands. A sorted wall still opens on a different set of
+records every time the scene starts, and swaps only ever exchange a cover for
+another from the same part of the order, so a gradient keeps its shape however
+long you leave it running.
+
 A few things worth knowing:
 
 - **Confirmed, proposed and live-grabbed artwork all count**, so the wall looks

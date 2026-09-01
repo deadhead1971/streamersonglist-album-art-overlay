@@ -345,6 +345,30 @@
       </fieldset>
 
       <fieldset>
+        <legend>Arrangement</legend>
+        <div class="grid">
+          <label>Order
+            <select name="order" id="wall-order">
+              <option value="shuffle" {{ 'selected' if wall_opts.order == 'shuffle' }}>Shuffled</option>
+              <option value="lightness" {{ 'selected' if wall_opts.order == 'lightness' }}>Dark to light</option>
+              <option value="hue" {{ 'selected' if wall_opts.order == 'hue' }}>By colour (warm to cool)</option>
+              <option value="artist" {{ 'selected' if wall_opts.order == 'artist' }}>By artist</option>
+            </select></label>
+          <label id="wall-axis-field">Runs
+            <select name="sort_axis">
+              <option value="row" {{ 'selected' if wall_opts.sort_axis == 'row' }}>Across in rows</option>
+              <option value="column" {{ 'selected' if wall_opts.sort_axis == 'column' }}>Down in columns</option>
+            </select></label>
+        </div>
+        <p class="muted">A sorted wall still opens on a different stretch of
+          your library each time the scene starts, and swaps stay near each
+          tile's place in the order — so a gradient keeps its shape instead of
+          speckling. <em>Dark to light</em> works on any library;
+          <em>by colour</em> depends on yours having covers spread across the
+          spectrum.</p>
+      </fieldset>
+
+      <fieldset>
         <legend>Motion</legend>
         <div class="grid">
           <label>Swap a tile every (seconds)
@@ -461,6 +485,16 @@ document.querySelectorAll('.promo-demo').forEach(sel => {
       + (sel.value ? '?promo_demo=' + sel.value + '&promo=1' : '');
   });
 });
+
+// Sort direction only means something once there is an order to run in one.
+(function () {
+  const order = document.getElementById('wall-order');
+  const axis = document.getElementById('wall-axis-field');
+  if (!order || !axis) return;
+  const sync = () => { axis.style.visibility = order.value === 'shuffle' ? 'hidden' : ''; };
+  order.addEventListener('change', sync);
+  sync();
+})();
 
 // Restoring a hidden cover. Hiding is one click in the preview, so undoing it
 // has to be one click too — and it reloads so the preview picks the cover back
