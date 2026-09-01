@@ -176,12 +176,26 @@
     Shuffled order has no sequence to protect, so its band is the whole pool
     and behaviour is unchanged.
   */
-  function bandFor(p, want) {
+  function placementBand(p, want) {
     const total = ordered.length;
-    if (opts.order === "shuffle" || !total) return { lo: 0, hi: total };
+    if (!total) return { lo: 0, hi: 0 };
     const lo = Math.floor(p * total / want);
-    const hi = Math.max(lo + 1, Math.floor((p + 1) * total / want));
-    return { lo: lo, hi: Math.min(hi, total) };
+    const hi = Math.max(lo + 1, Math.min(total, Math.floor((p + 1) * total / want)));
+    return { lo: lo, hi: hi };
+  }
+
+  /*
+    How far that slot may reach when it swaps — which is NOT the same question
+    as where it starts.
+
+    Every slot is placed from its own band, whatever the order, because that is
+    what gives eighteen slots eighteen different covers. Only the swap reach
+    differs: a sorted wall must stay inside its band or the gradient speckles,
+    while a shuffled one has no sequence to protect and may draw from anywhere,
+    exactly as it did before ordering existed.
+  */
+  function swapBand(band) {
+    return opts.order === "shuffle" ? { lo: 0, hi: ordered.length } : band;
   }
 
   /*
@@ -389,11 +403,11 @@
     offset = Math.floor(Math.random() * total);
 
     for (let p = 0; p < box.want; p++) {
-      const band = bandFor(sequenceIndex(p), box.want);
-      const size = Math.max(1, band.hi - band.lo);
-      const entry = ordered[(band.lo + (offset % size)) % total];
+      const slot = placementBand(sequenceIndex(p), box.want);
+      const size = Math.max(1, slot.hi - slot.lo);
+      const entry = ordered[(slot.lo + (offset % size)) % total];
       if (!entry) break;
-      const tile = makeTile(entry, p, band);
+      const tile = makeTile(entry, p, swapBand(slot));
       tiles.push(tile);
       wall.appendChild(tile.el);
     }
