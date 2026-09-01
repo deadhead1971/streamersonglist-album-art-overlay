@@ -1203,14 +1203,21 @@ def overlay_wall_exclude():
     real case is "that one cover is wrong", not "let me choose all 128".
     """
     data = request.json or {}
+    action = data.get("action")
+    cfg = config.load_config()
+    opts = cfg.setdefault("wall", {})
+
+    if action == "show_all":
+        opts["exclude"] = []
+        config.save_config(cfg)
+        return jsonify({"ok": True, "excluded": 0})
+
     digest = str(data.get("hash", "")).strip().lower()
     if len(digest) != 32 or not all(c in "0123456789abcdef" for c in digest):
         return jsonify({"ok": False, "error": "bad hash"}), 400
 
-    cfg = config.load_config()
-    opts = cfg.setdefault("wall", {})
     excluded = [h for h in (opts.get("exclude") or []) if h != digest]
-    if data.get("action") != "show":
+    if action != "show":
         excluded.append(digest)
     opts["exclude"] = excluded
     config.save_config(cfg)
@@ -1234,6 +1241,24 @@ def overlay_settings_page():
     wall_opts = wall_options(cfg, {})
     wall_pool = len(wall_tiles(cfg, wall_opts))
 
+    # Hidden covers are shown back as thumbnails so they can be restored one at
+    # a time. They are excluded from the pool by definition, so look them up
+    # against the unfiltered library rather than the pool.
+    wall_hidden = []
+    excluded = wall_opts.get("exclude") or []
+    if excluded:
+        everything = {
+            tile["hash"]: tile
+            for tile in Library().tile_pool(songlist_only=False, dedupe=False)
+        }
+        for digest in excluded:
+            found = everything.get(digest)
+            wall_hidden.append({
+                "hash": digest,
+                "name": found["songs"][0] if found else "No longer in your library",
+                "known": found is not None,
+            })
+
     return render_template("overlay_settings.html", opts=opts, cfg=cfg,
                            queue_loader=str(loader_dir / "overlay_queue.html"),
                            current_loader=str(loader_dir / "overlay_current.html"),
@@ -1242,6 +1267,7 @@ def overlay_settings_page():
                            has_avatar=bool(_streamer_avatar(cfg)),
                            layouts=_CURRENT_LAYOUTS,
                            wall_opts=wall_opts, wall_pool=wall_pool,
+                           wall_hidden=wall_hidden,
                            wall_url=url_for("overlay_wall_page", _external=True),
                            wall_loader=str(loader_dir / "overlay_wall.html"),
                            wall_filters=_WALL_FILTERS,
@@ -1347,10 +1373,9 @@ def save_overlay_wall_settings():
             opts[key] = defaults[key]
     filt = form.get("filter", "songlist")
     opts["filter"] = filt if filt in _WALL_FILTERS else "songlist"
-    # "Show all hidden covers" clears the exclude list; otherwise it is only
-    # ever touched by clicking a tile, so this form must not overwrite it.
-    if form.get("clear_exclude") == "on":
-        opts["exclude"] = []
+    # ``exclude`` is deliberately absent from this form: hiding and restoring
+    # happen immediately via /overlay/wall/exclude, so saving these settings
+    # must leave the list exactly as it found it.
 
     config.save_config(cfg)
     return redirect(url_for("overlay_settings_page", saved="wall") + "#wall")

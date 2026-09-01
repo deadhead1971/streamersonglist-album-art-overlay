@@ -216,8 +216,27 @@ table.songs th { color: var(--muted); font-weight: 600; font-size: 13px; }
 /* Both bars are sticky, so an anchored panel must clear them both. */
 .panel[id] { scroll-margin-top: 112px; }
 
-/* Hidden-cover count, shown only once the user has hidden something. */
-.wall-hidden { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+/* Hidden covers, shown only once something has been hidden. Thumbnails rather
+   than a count, because "how do I undo this" needs to be answerable by looking
+   at the thing you hid and clicking it. */
+.hidden-strip { display: flex; flex-wrap: wrap; gap: 8px; }
+.hidden-cover {
+  position: relative; width: 64px; height: 64px; padding: 0; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  background: var(--panel2);
+}
+.hidden-cover img { width: 100%; height: 100%; object-fit: cover; display: block;
+  filter: grayscale(1); opacity: .55; transition: filter .15s ease, opacity .15s ease; }
+.hidden-cover:hover img, .hidden-cover:focus-visible img { filter: none; opacity: 1; }
+.hidden-gone { display: grid; place-items: center; width: 100%; height: 100%;
+  font-size: 11px; color: var(--muted); }
+.hidden-restore {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 0;
+  font-size: 11px; font-weight: 600; color: #fff; background: rgba(0,0,0,.72);
+  opacity: 0; transition: opacity .15s ease;
+}
+.hidden-cover:hover .hidden-restore,
+.hidden-cover:focus-visible .hidden-restore { opacity: 1; }
 .form select, .form input[type=color] {
   background: var(--bg); border: 1px solid var(--line); color: var(--text);
   padding: 8px 10px; border-radius: 8px; width: 100%; margin-top: 5px;

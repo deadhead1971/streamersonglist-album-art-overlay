@@ -281,8 +281,10 @@
       <iframe id="wall-preview" src="{{ url_for('overlay_wall_page', pick=1) }}"
               title="Art wall preview"></iframe>
       <p class="muted">Shown over a checkerboard — in OBS the background is
-        transparent. <strong>Click any cover to hide it</strong> from the wall;
-        hidden covers stay in your library and are only hidden here.</p>
+        transparent. <strong>Click any cover to hide it from the wall.</strong>
+        That is saved straight away and applies to the real overlay, not just
+        this preview — but nothing is deleted, and every hidden cover comes
+        back with one click under <em>Which covers</em> below.</p>
     </div>
 
     <form method="post" action="{{ url_for('save_overlay_wall_settings') }}" class="form">
@@ -317,11 +319,27 @@
         <label class="checkbox"><input type="checkbox" name="dedupe"
                {{ 'checked' if wall_opts.dedupe }}>
           Show each cover only once (several songs often share one album)</label>
-        {% if wall_opts.exclude %}
-        <div class="wall-hidden" style="margin-top:.8em">
-          <span class="muted">{{ wall_opts.exclude | length }} cover(s) hidden.</span>
-          <label class="checkbox"><input type="checkbox" name="clear_exclude">
-            Show them all again on save</label>
+        {% if wall_hidden %}
+        <div class="wall-hidden" id="wall-hidden">
+          <p class="muted" style="margin:.9em 0 .5em">
+            <strong>{{ wall_hidden | length }} cover{{ '' if wall_hidden | length == 1 else 's' }} hidden</strong>
+            from the wall. Click one to show it again — they were never removed
+            from your library.</p>
+          <div class="hidden-strip">
+            {% for h in wall_hidden %}
+            <button type="button" class="hidden-cover" data-hash="{{ h.hash }}"
+                    title="{{ h.name }}&#10;Click to show this cover again">
+              {% if h.known %}
+              <img src="{{ url_for('overlay_wall_tile', h=h.hash, s=256) }}" alt="{{ h.name }}">
+              {% else %}
+              <span class="hidden-gone">gone</span>
+              {% endif %}
+              <span class="hidden-restore">Show</span>
+            </button>
+            {% endfor %}
+          </div>
+          <button type="button" id="wall-show-all" class="secondary"
+                  style="margin-top:.7em">Show all again</button>
         </div>
         {% endif %}
       </fieldset>
@@ -443,6 +461,34 @@ document.querySelectorAll('.promo-demo').forEach(sel => {
       + (sel.value ? '?promo_demo=' + sel.value + '&promo=1' : '');
   });
 });
+
+// Restoring a hidden cover. Hiding is one click in the preview, so undoing it
+// has to be one click too — and it reloads so the preview picks the cover back
+// up rather than leaving the page disagreeing with the saved settings.
+(function () {
+  const post = body => fetch('/overlay/wall/exclude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(r => r.json());
+
+  document.querySelectorAll('.hidden-cover').forEach(btn => {
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      post({ hash: btn.dataset.hash, action: 'show' })
+        .then(() => location.reload())
+        .catch(() => { btn.disabled = false; });
+    });
+  });
+
+  const all = document.getElementById('wall-show-all');
+  if (all) all.addEventListener('click', () => {
+    all.disabled = true;
+    post({ action: 'show_all' })
+      .then(() => location.reload())
+      .catch(() => { all.disabled = false; });
+  });
+})();
 
 // Art wall headroom. The tile swap needs SPARE covers, not merely enough: with
 // exactly as many covers as tiles every one is already on screen, so there is
