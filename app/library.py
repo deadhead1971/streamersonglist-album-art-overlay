@@ -334,7 +334,7 @@ class Library:
         viewer requests something the streamer cannot play.
         """
         excluded = set(exclude or ())
-        seen = set()
+        groups = {}
         tiles = []
         for entry in self._manifest.values():
             if not isinstance(entry, dict):
@@ -349,6 +349,11 @@ class Library:
             digest = content_hash(path)
             if digest is None or digest in excluded:
                 continue
+
+            title = entry.get("title") or ""
+            artist = entry.get("artist") or ""
+            name = " — ".join(p for p in (artist, title) if p) or "Untitled"
+
             if dedupe:
                 # Group on what the cover LOOKS like, not on its bytes: the
                 # same artwork fetched twice comes back re-encoded and would
@@ -357,14 +362,24 @@ class Library:
                 group = perceptual_hash(path)
                 if group is None:
                     group = digest
-                if group in seen:
+                first = groups.get(group)
+                if first is not None:
+                    # Merged away, but still recorded: a cover shared by six
+                    # songs that names only one of them looks like the wall has
+                    # picked the wrong picture. ``songs`` lets the tooltip say
+                    # how many it stands for.
+                    first["songs"].append(name)
                     continue
-                seen.add(group)
-            tiles.append({
+
+            tile = {
                 "hash": digest,
-                "title": entry.get("title") or "",
-                "artist": entry.get("artist") or "",
-            })
+                "title": title,
+                "artist": artist,
+                "songs": [name],
+            }
+            if dedupe:
+                groups[group] = tile
+            tiles.append(tile)
         return tiles
 
     def path_for_hash(self, digest: str) -> Optional[Path]:

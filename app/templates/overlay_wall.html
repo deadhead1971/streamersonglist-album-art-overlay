@@ -172,6 +172,27 @@
     return face;
   }
 
+  /*
+    The tooltip names whichever cover the tile is showing RIGHT NOW, so it has
+    to be rewritten on every swap. A label left behind from the cover the tile
+    started with is worse than untidy: the click below hides the cover that is
+    actually displayed, so a stale label means hiding a different song from the
+    one you just read.
+  */
+  function labelFor(entry) {
+    const songs = entry.songs || [];
+    let head = songs.length
+      ? songs[0]
+      : (entry.artist ? entry.artist + " — " : "") + entry.title;
+    // Several songs usually share an album. Saying so stops a shared cover
+    // reading as the wall having picked the wrong picture for that song.
+    if (songs.length > 1) {
+      head += "  (+" + (songs.length - 1) + " more song"
+            + (songs.length > 2 ? "s" : "") + " share this cover)";
+    }
+    return head + "\nClick to hide this cover";
+  }
+
   function makeTile(entry, seed) {
     const el = document.createElement("div");
     el.className = "tile pre";
@@ -196,8 +217,7 @@
     img.src = tileUrl(entry.hash, tileSize);
 
     if (PICK) {
-      el.title = (entry.artist ? entry.artist + " — " : "") + entry.title
-                 + "\nClick to hide this cover";
+      el.title = labelFor(entry);
       el.addEventListener("click", function () { hideTile(tile); });
     }
 
@@ -230,6 +250,7 @@
       take(entry.hash);
       tile.hash = entry.hash;
       tile.active = 1 - tile.active;
+      if (PICK) tile.el.title = labelFor(entry);
       if (onDone) onDone();
     };
     img.onload = apply;
