@@ -770,6 +770,11 @@ _OVERLAY_STATUSES = artwork.USABLE_STATUSES
 _OVERLAY_PRESETS = ("dark", "light", "minimal", "glass")
 _OVERLAY_ANIMATIONS = ("slide", "fade", "none")
 _OVERLAY_SPEEDS = ("normal", "fast")
+_OVERLAY_DIRECTIONS = ("column", "row")
+
+# The fields that make a row more than a cover. Whether any of them is on is
+# what "artwork only" means, and two rules key off it (see overlay_options).
+_OVERLAY_TEXT_KEYS = ("show_title", "show_artist", "show_requester")
 
 # Query-param overrides so one config can drive multiple differently-styled
 # browser sources: bools are 0/1, e.g. /overlay/queue?max=3&current=0&preset=glass
@@ -781,6 +786,7 @@ _OVERLAY_BOOL_KEYS = {
     "requester": "show_requester",
     "position": "show_position",
     "promo": "show_promo",
+    "card": "show_card",
 }
 
 
@@ -825,12 +831,32 @@ def _merge_overlay_options(cfg: dict, args, section: str,
 
 def overlay_options(cfg: dict, args) -> dict:
     """Effective queue overlay options: config defaults + query overrides."""
-    return _merge_overlay_options(
+    opts = _merge_overlay_options(
         cfg, args, "overlay", _OVERLAY_BOOL_KEYS,
         (("max", "max_songs", 1, 20),
          ("font_size", "font_size", 8, 72),
          ("art_size", "art_size", 16, 300),
          ("row_gap", "row_gap", 0, 100)))
+    if args.get("dir") in _OVERLAY_DIRECTIONS:
+        opts["direction"] = args.get("dir")
+    if opts.get("direction") not in _OVERLAY_DIRECTIONS:
+        opts["direction"] = "column"
+
+    # Horizontal is artwork-only, and that is settled HERE rather than left to
+    # the template or the settings form. The saved text choices are kept
+    # untouched in config so switching back to a column restores them — but a
+    # tab left open on the old form, or a hand-typed ?dir=row&title=1, must not
+    # be able to render text the strip has no room for. Artwork is forced on
+    # for the same reason: a row with every field off is an empty overlay.
+    if opts["direction"] == "row":
+        for key in _OVERLAY_TEXT_KEYS:
+            opts[key] = False
+        opts["show_artwork"] = True
+    # With every text field off there is no meta block for the position number
+    # to sit in, and beside a bare cover it puts the covers on an uneven pitch.
+    if not any(opts[key] for key in _OVERLAY_TEXT_KEYS):
+        opts["show_position"] = False
+    return opts
 
 
 def overlay_current_options(cfg: dict, args) -> dict:
@@ -1314,6 +1340,9 @@ def save_overlay_settings():
             opts[key] = min(hi, max(lo, int(form.get(key, default))))
         except (TypeError, ValueError):
             opts[key] = default
+    direction = form.get("direction", "column")
+    opts["direction"] = (direction if direction in _OVERLAY_DIRECTIONS
+                         else "column")
     preset = form.get("preset", "dark")
     opts["preset"] = preset if preset in _OVERLAY_PRESETS else "dark"
     animation = form.get("animation", "slide")

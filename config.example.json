@@ -23,6 +23,7 @@
   "overlay": {
     "max_songs": 5,
     "include_current": true,
+    "direction": "column",
     "show_artwork": true,
     "show_title": true,
     "show_artist": true,
@@ -30,6 +31,7 @@
     "show_position": true,
     "show_promo": false,
     "preset": "dark",
+    "show_card": true,
     "font_size": 20,
     "art_size": 56,
     "row_gap": 10,

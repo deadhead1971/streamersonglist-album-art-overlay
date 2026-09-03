@@ -39,7 +39,8 @@
       <fieldset>
         <legend>Songs</legend>
         <label>Max songs shown
-          <input type="number" name="max_songs" value="{{ opts.max_songs }}" min="1" max="20"></label>
+          <input type="number" id="queue-max" name="max_songs"
+                 value="{{ opts.max_songs }}" min="1" max="20"></label>
         <label class="checkbox"><input type="checkbox" name="include_current"
                {{ 'checked' if opts.include_current }}>
           Include the current song (queue position 1)</label>
@@ -49,17 +50,38 @@
       </fieldset>
 
       <fieldset>
+        <legend>Layout</legend>
+        <label>Direction
+          <select name="direction" id="queue-direction">
+            <option value="column" {{ 'selected' if opts.direction != 'row' }}>
+              Vertical list</option>
+            <option value="row" {{ 'selected' if opts.direction == 'row' }}>
+              Horizontal strip (artwork only)</option>
+          </select></label>
+        <p class="muted" id="queue-width"></p>
+      </fieldset>
+
+      <fieldset>
         <legend>Fields</legend>
-        <label class="checkbox"><input type="checkbox" name="show_artwork"
-               {{ 'checked' if opts.show_artwork }}> Artwork</label>
-        <label class="checkbox"><input type="checkbox" name="show_position"
-               {{ 'checked' if opts.show_position }}> Position number</label>
-        <label class="checkbox"><input type="checkbox" name="show_title"
-               {{ 'checked' if opts.show_title }}> Song title</label>
-        <label class="checkbox"><input type="checkbox" name="show_artist"
-               {{ 'checked' if opts.show_artist }}> Artist</label>
-        <label class="checkbox"><input type="checkbox" name="show_requester"
-               {{ 'checked' if opts.show_requester }}> Requested by</label>
+        <div id="queue-fields">
+          <label class="checkbox"><input type="checkbox" name="show_artwork"
+                 {{ 'checked' if opts.show_artwork }}> Artwork</label>
+          <label class="checkbox"><input type="checkbox" name="show_position"
+                 {{ 'checked' if opts.show_position }}> Position number</label>
+          <label class="checkbox"><input type="checkbox" name="show_title"
+                 {{ 'checked' if opts.show_title }}> Song title</label>
+          <label class="checkbox"><input type="checkbox" name="show_artist"
+                 {{ 'checked' if opts.show_artist }}> Artist</label>
+          <label class="checkbox"><input type="checkbox" name="show_requester"
+                 {{ 'checked' if opts.show_requester }}> Requested by</label>
+        </div>
+        <p class="muted" id="queue-fields-note" hidden>A horizontal strip is
+          artwork only — there is no room beside a cover for a title, and the
+          position number would put the covers on an uneven pitch. Your
+          choices here are kept, and come back if you switch to a vertical
+          list.</p>
+        <p class="muted" id="queue-position-note" hidden>The position number
+          needs a text field to sit beside; with all three off it is hidden.</p>
         <label class="checkbox"><input type="checkbox" name="show_promo"
                {{ 'checked' if opts.show_promo }}>
           Show the <a href="#promo">empty-queue card</a> when there's nothing
@@ -74,10 +96,16 @@
             <option value="{{ p }}" {{ 'selected' if opts.preset == p }}>{{ p }}</option>
             {% endfor %}
           </select></label>
+        <label class="checkbox"><input type="checkbox" name="show_card"
+               {{ 'checked' if opts.show_card }}>
+          Draw a card behind each row</label>
+        <p class="muted">Untick to drop the background, padding and shadow and
+          let the artwork sit straight on the transparent source. The
+          empty-queue card keeps its box either way.</p>
         <div class="grid">
           <label>Font size (px) <input type="number" name="font_size" value="{{ opts.font_size }}" min="8" max="72"></label>
-          <label>Art size (px) <input type="number" name="art_size" value="{{ opts.art_size }}" min="16" max="300"></label>
-          <label>Row gap (px) <input type="number" name="row_gap" value="{{ opts.row_gap }}" min="0" max="100"></label>
+          <label>Art size (px) <input type="number" id="queue-art" name="art_size" value="{{ opts.art_size }}" min="16" max="300"></label>
+          <label>Row gap (px) <input type="number" id="queue-gap" name="row_gap" value="{{ opts.row_gap }}" min="0" max="100"></label>
           <label>Accent colour <input type="color" name="accent" value="{{ opts.accent }}"></label>
         </div>
         <div class="grid">
@@ -485,6 +513,62 @@ document.querySelectorAll('.promo-demo').forEach(sel => {
       + (sel.value ? '?promo_demo=' + sel.value + '&promo=1' : '');
   });
 });
+
+/*
+  Queue overlay layout. Two jobs, both driven by the direction select.
+
+  1. The field checkboxes are dimmed, NOT disabled, when the strip is
+     horizontal: a disabled checkbox posts nothing, so saving would quietly
+     wipe the text choices the user gets back when they switch to a column.
+     The server does the actual forcing.
+  2. A horizontal strip does not wrap, and the overlay body clips what does
+     not fit, so overshooting the source width loses covers with nothing on
+     screen to say so. Do the arithmetic here instead, where they are choosing
+     the numbers.
+*/
+(function () {
+  const dir = document.getElementById('queue-direction');
+  const fields = document.getElementById('queue-fields');
+  const note = document.getElementById('queue-fields-note');
+  const posNote = document.getElementById('queue-position-note');
+  const width = document.getElementById('queue-width');
+  const max = document.getElementById('queue-max');
+  const art = document.getElementById('queue-art');
+  const gap = document.getElementById('queue-gap');
+  if (!dir || !fields || !width) return;
+
+  const num = (el, fallback) => {
+    const n = parseInt(el && el.value, 10);
+    return isNaN(n) ? fallback : n;
+  };
+  const textOn = () => ['show_title', 'show_artist', 'show_requester']
+    .some(n => fields.querySelector('[name="' + n + '"]').checked);
+
+  function update() {
+    const row = dir.value === 'row';
+    fields.classList.toggle('fields-off', row);
+    note.hidden = !row;
+    // Only worth saying when they have done it themselves — in a row the
+    // note above has already explained it.
+    posNote.hidden = row || textOn();
+
+    if (!row) { width.textContent = ''; return; }
+    const n = Math.max(1, Math.min(20, num(max, 5)));
+    const size = Math.max(16, Math.min(300, num(art, 56)));
+    const g = Math.max(0, Math.min(100, num(gap, 10)));
+    // 8px of body padding each side, and n-1 gaps between n covers.
+    const needed = n * size + (n - 1) * g + 16;
+    width.textContent = n + ' cover' + (n === 1 ? '' : 's') + ' at ' + size
+      + 'px needs a browser source at least ' + needed
+      + 'px wide. It does not wrap, so anything past that is cut off.';
+  }
+
+  [dir, max, art, gap].forEach(el => {
+    if (el) { el.addEventListener('input', update); el.addEventListener('change', update); }
+  });
+  fields.addEventListener('change', update);
+  update();
+})();
 
 // Sort direction only means something once there is an order to run in one.
 (function () {

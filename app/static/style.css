@@ -70,6 +70,10 @@ input[type=text], input[type=number], input[type=search], input[type=password] {
 .form label input { margin-top: 5px; }
 .form label.checkbox { display: flex; align-items: center; gap: 8px; color: var(--text); }
 .form label.checkbox input { width: auto; margin: 0; }
+/* Settings a chosen layout has taken out of play. Dimmed rather than
+   disabled, so their values still post and the user's choices survive being
+   switched away from and back. */
+.fields-off { opacity: .45; pointer-events: none; }
 fieldset { border: 1px solid var(--line); border-radius: 10px; margin: 0 0 18px; padding: 6px 18px 16px; }
 legend { padding: 0 8px; color: var(--accent); font-size: 13px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }

@@ -95,6 +95,13 @@ DEFAULT_CONFIG = {
     "overlay": {
         "max_songs": 5,
         "include_current": True,
+        # Which way the list runs: "column" is the classic top-down list,
+        # "row" a horizontal strip of covers across the screen. Horizontal is
+        # artwork-only by design — a cover with its title beside it needs
+        # ~300px, and six of those overrun a 1920 source, so the text fields
+        # are forced off rather than offered and then truncated. It does not
+        # wrap: the strip's height stays put whatever the queue does.
+        "direction": "column",   # column | row
         "show_artwork": True,
         "show_title": True,
         "show_artist": True,
@@ -104,6 +111,12 @@ DEFAULT_CONFIG = {
         # when this overlay has nothing else to render.
         "show_promo": False,
         "preset": "dark",        # dark | light | minimal | glass
+        # Draw the preset's card behind each row. Off leaves the artwork
+        # floating on the transparent source — which is what "artwork only"
+        # always needed: hiding the text alone still left the cover sitting in
+        # a full-width empty box. The empty-queue promo card is exempt, since
+        # it shows alone and its message has to stay readable.
+        "show_card": True,
         "font_size": 20,         # px, base text size
         "art_size": 56,          # px, artwork thumbnail square
         "row_gap": 10,           # px between rows

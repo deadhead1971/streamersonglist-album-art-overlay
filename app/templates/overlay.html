@@ -14,6 +14,15 @@
     padding: 8px;
   }
   #queue { display: flex; flex-direction: column; }
+  /* Horizontal strip. Deliberately nowrap: the strip's height then never
+     changes, which is what a source anchored to an edge of the scene needs.
+     Overshooting the source width clips, so the settings panel does the
+     arithmetic and warns rather than the layout silently reflowing. */
+  body.dir-row #queue { flex-direction: row; flex-wrap: nowrap; }
+  /* Artwork only: rows shrink to the cover. A flexbox stretches its children
+     across the cross axis by default, which is why hiding every text field
+     used to leave a small cover marooned in a full-width empty card. */
+  body.art-only #queue { align-items: flex-start; }
   .row {
     display: flex;
     align-items: center;
@@ -24,11 +33,16 @@
   }
   /* Enter/exit states. Which pair applies is driven by the animation mode
      class on <body> (a-slide / a-fade); a-none uses no transitions at all. */
+  /* A row enters ALONG the stacking axis (arriving at the end of the list)
+     and leaves ACROSS it (stepping out of the line). Both flip round with the
+     direction, so a horizontal strip reads the same way a column does. */
   body.a-none .row { transition: none; }
   .row.pre-enter { opacity: 0; }
   body.a-slide .row.pre-enter { transform: translateY(1.2em); }
+  body.a-slide.dir-row .row.pre-enter { transform: translateX(1.2em); }
   .row.exiting { opacity: 0; }
   body.a-slide .row.exiting { transform: translateX(-2.5em); }
+  body.a-slide.dir-row .row.exiting { transform: translateY(-2.5em); }
 
   .pos {
     font-weight: 700;
@@ -69,6 +83,20 @@
                       -webkit-backdrop-filter: blur(10px);
                       border: 1px solid rgba(255,255,255,.18);
                       text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+
+  /* Card off: strip the preset's chrome so the artwork floats on the
+     transparent source. It follows every preset rather than being a fifth
+     one, so "no box, but dark-preset text" is still reachable. The promo is
+     exempt — it only ever shows when nothing else does, so it never sits
+     beside a bare cover, and its message has to stay readable. */
+  body.no-card .row:not(.promo) {
+    background: none;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 </style>
 </head>
 <body class="p-{{ opts.preset }} a-{{ opts.animation }}">
@@ -128,7 +156,14 @@
   }
 
   function applyPageStyle(o, d) {
-    document.body.className = `p-${o.preset} a-${o.animation}`;
+    // The server has already forced the text fields off in row direction and
+    // dropped the position number when nothing else is showing, so this only
+    // has to reflect what it was sent.
+    const artOnly = !o.show_title && !o.show_artist && !o.show_requester;
+    const dir = o.direction === "row" ? "row" : "column";
+    document.body.className = `p-${o.preset} a-${o.animation} dir-${dir}`
+      + (artOnly ? " art-only" : "")
+      + (o.show_card === false ? " no-card" : "");
     document.body.style.fontSize = o.font_size + "px";
     document.body.style.setProperty("--dur", (d.move / 1000) + "s");
     queueEl.style.gap = o.row_gap + "px";
@@ -167,13 +202,18 @@
     });
     let moved = false;
     if (d.move) {
+      // Both axes, so one code path covers a column shifting up and a strip
+      // shifting sideways.
       survivors.forEach(it => {
         const el = rows.get(keyOf(it));
-        const dy = firstRects.get(keyOf(it)).top - el.getBoundingClientRect().top;
-        if (Math.abs(dy) > 1) {
+        const first = firstRects.get(keyOf(it));
+        const now = el.getBoundingClientRect();
+        const dx = first.left - now.left;
+        const dy = first.top - now.top;
+        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
           moved = true;
           el.style.transition = "none";
-          el.style.transform = `translateY(${dy}px)`;
+          el.style.transform = `translate(${dx}px, ${dy}px)`;
         }
       });
       if (moved) {
