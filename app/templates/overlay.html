@@ -52,7 +52,8 @@
   }
   .art {
     object-fit: cover;
-    border-radius: 6px;
+    /* 0 is square; half of art_size or more rounds it to a circle. */
+    border-radius: var(--art-radius, 6px);
     flex: none;
     background: rgba(0,0,0,.4);
   }
@@ -166,6 +167,8 @@
       + (o.show_card === false ? " no-card" : "");
     document.body.style.fontSize = o.font_size + "px";
     document.body.style.setProperty("--dur", (d.move / 1000) + "s");
+    document.body.style.setProperty(
+      "--art-radius", (o.art_radius == null ? 6 : o.art_radius) + "px");
     queueEl.style.gap = o.row_gap + "px";
   }
 

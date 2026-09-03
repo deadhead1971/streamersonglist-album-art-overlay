@@ -34,6 +34,7 @@
     "show_card": true,
     "font_size": 20,
     "art_size": 56,
+    "art_radius": 6,
     "row_gap": 10,
     "accent": "#4da3ff",
     "animation": "slide",

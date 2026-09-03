@@ -836,6 +836,7 @@ def overlay_options(cfg: dict, args) -> dict:
         (("max", "max_songs", 1, 20),
          ("font_size", "font_size", 8, 72),
          ("art_size", "art_size", 16, 300),
+         ("art_radius", "art_radius", 0, 150),
          ("row_gap", "row_gap", 0, 100)))
     if args.get("dir") in _OVERLAY_DIRECTIONS:
         opts["direction"] = args.get("dir")
@@ -1335,6 +1336,7 @@ def save_overlay_settings():
         opts["max_songs"] = 5
     for key, default, lo, hi in (("font_size", 20, 8, 72),
                                  ("art_size", 56, 16, 300),
+                                 ("art_radius", 6, 0, 150),
                                  ("row_gap", 10, 0, 100)):
         try:
             opts[key] = min(hi, max(lo, int(form.get(key, default))))

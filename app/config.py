@@ -119,6 +119,9 @@ DEFAULT_CONFIG = {
         "show_card": True,
         "font_size": 20,         # px, base text size
         "art_size": 56,          # px, artwork thumbnail square
+        # px corner radius on the artwork. 0 is square; half of art_size or
+        # more is a circle, so the range has to reach half of art_size's cap.
+        "art_radius": 6,
         "row_gap": 10,           # px between rows
         "accent": "#4da3ff",     # position number / highlight colour
         "animation": "slide",    # slide | fade | none

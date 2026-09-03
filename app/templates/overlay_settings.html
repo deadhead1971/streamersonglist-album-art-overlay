@@ -91,23 +91,29 @@
       <fieldset>
         <legend>Style</legend>
         <label>Preset
-          <select name="preset">
+          <select name="preset" id="queue-preset">
             {% for p in presets %}
             <option value="{{ p }}" {{ 'selected' if opts.preset == p }}>{{ p }}</option>
             {% endfor %}
           </select></label>
         <label class="checkbox"><input type="checkbox" name="show_card"
-               {{ 'checked' if opts.show_card }}>
+               id="queue-card" {{ 'checked' if opts.show_card }}>
           Draw a card behind each row</label>
         <p class="muted">Untick to drop the background, padding and shadow and
           let the artwork sit straight on the transparent source. The
           empty-queue card keeps its box either way.</p>
+        <p class="muted" id="queue-preset-note" hidden>Switched to
+          <em>minimal</em> with the card off — <em>light</em> and <em>glass</em>
+          put a pale box round every cover, which rarely looks good with no
+          text in it. Change either back if you want the box.</p>
         <div class="grid">
           <label>Font size (px) <input type="number" name="font_size" value="{{ opts.font_size }}" min="8" max="72"></label>
           <label>Art size (px) <input type="number" id="queue-art" name="art_size" value="{{ opts.art_size }}" min="16" max="300"></label>
+          <label>Art corners (px) <input type="number" id="queue-radius" name="art_radius" value="{{ opts.art_radius }}" min="0" max="150"></label>
           <label>Row gap (px) <input type="number" id="queue-gap" name="row_gap" value="{{ opts.row_gap }}" min="0" max="100"></label>
           <label>Accent colour <input type="color" name="accent" value="{{ opts.accent }}"></label>
         </div>
+        <p class="muted" id="queue-radius-note"></p>
         <div class="grid">
           <label>Animation
             <select name="animation">
@@ -535,6 +541,11 @@ document.querySelectorAll('.promo-demo').forEach(sel => {
   const max = document.getElementById('queue-max');
   const art = document.getElementById('queue-art');
   const gap = document.getElementById('queue-gap');
+  const radius = document.getElementById('queue-radius');
+  const radiusNote = document.getElementById('queue-radius-note');
+  const preset = document.getElementById('queue-preset');
+  const card = document.getElementById('queue-card');
+  const presetNote = document.getElementById('queue-preset-note');
   if (!dir || !fields || !width) return;
 
   const num = (el, fallback) => {
@@ -544,13 +555,39 @@ document.querySelectorAll('.promo-demo').forEach(sel => {
   const textOn = () => ['show_title', 'show_artist', 'show_requester']
     .some(n => fields.querySelector('[name="' + n + '"]').checked);
 
+  // Steer the look the FIRST time a change makes the overlay artwork-only —
+  // light and glass wrap every cover in a pale box, which is the thing that
+  // looks wrong once there is no text in it. A steer, not a rule: a dark card
+  // behind covers is a real choice, so both controls stay editable and a
+  // second change never overrides what they picked.
+  let wasArtOnly = dir.value === 'row' || !textOn();
+
   function update() {
     const row = dir.value === 'row';
+    const artOnly = row || !textOn();
     fields.classList.toggle('fields-off', row);
     note.hidden = !row;
     // Only worth saying when they have done it themselves — in a row the
     // note above has already explained it.
     posNote.hidden = row || textOn();
+
+    if (artOnly && !wasArtOnly && preset && card) {
+      preset.value = 'minimal';
+      card.checked = false;
+      presetNote.hidden = false;
+    } else if (!artOnly && presetNote) {
+      presetNote.hidden = true;
+    }
+    wasArtOnly = artOnly;
+
+    if (radius && radiusNote) {
+      const size = Math.max(16, Math.min(300, num(art, 56)));
+      const r = Math.max(0, Math.min(150, num(radius, 6)));
+      radiusNote.textContent = r * 2 >= size
+        ? 'Art corners: round, at ' + size + 'px covers.'
+        : 'Art corners: 0 is square; ' + Math.ceil(size / 2)
+          + ' makes a circle at ' + size + 'px covers.';
+    }
 
     if (!row) { width.textContent = ''; return; }
     const n = Math.max(1, Math.min(20, num(max, 5)));
@@ -563,10 +600,16 @@ document.querySelectorAll('.promo-demo').forEach(sel => {
       + 'px wide. It does not wrap, so anything past that is cut off.';
   }
 
-  [dir, max, art, gap].forEach(el => {
+  [dir, max, art, gap, radius].forEach(el => {
     if (el) { el.addEventListener('input', update); el.addEventListener('change', update); }
   });
   fields.addEventListener('change', update);
+  // Once they change either of the two the steer touched, the note describing
+  // it is stale. Setting .value/.checked in code fires no change event, so
+  // this only ever hears the user.
+  [preset, card].forEach(el => {
+    if (el) el.addEventListener('change', () => { presetNote.hidden = true; });
+  });
   update();
 })();
 
