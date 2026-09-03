@@ -28,6 +28,10 @@ a { color: var(--accent); text-decoration: none; }
 main { max-width: 1000px; margin: 0 auto; padding: 24px; }
 .panel { background: var(--panel); border: 1px solid var(--line);
   border-radius: 14px; padding: 24px; }
+/* Breathing room between stacked panels. Only the overlay settings page has
+   more than one, and a sibling selector leaves every single-panel page
+   untouched rather than adding a trailing gap above the footer. */
+.panel + .panel { margin-top: 50px; }
 h1 { margin: 0 0 16px; font-size: 22px; }
 
 .row { display: flex; align-items: center; gap: 12px; }
