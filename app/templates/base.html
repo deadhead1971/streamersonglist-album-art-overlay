@@ -23,6 +23,10 @@
     const el = document.getElementById('runtime-status');
     try {
       const d = await (await fetch('/api/runtime/status')).json();
+      // Pages with a live-queue preview hang an "add some songs" hint off this
+      // class, so the hint appears and clears on its own rather than needing a
+      // second poll — and can never contradict a preview that has filled up.
+      document.body.classList.toggle('queue-empty', !!d.running && !d.queue_length);
       // A rejected token is a settings mistake the user has to act on, so it
       // gets a banner on the page. It used to live in this pill's `title`
       // tooltip behind the words "Live service off", which reads as "you

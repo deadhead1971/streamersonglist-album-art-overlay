@@ -139,6 +139,8 @@
 
     <div class="overlay-preview">
       <h2>Preview</h2>
+      <p class="muted preview-hint">Your queue is empty — add a few songs
+        on StreamerSonglist and they'll show up here.</p>
       <iframe id="preview" src="{{ url_for('overlay_queue_page') }}"
               title="Overlay preview"></iframe>
       <label>Preview the empty-queue card
@@ -261,6 +263,8 @@
 
     <div class="overlay-preview">
       <h2>Preview</h2>
+      <p class="muted preview-hint">Your queue is empty — add a few songs
+        on StreamerSonglist and they'll show up here.</p>
       <iframe id="current-preview" src="{{ url_for('overlay_current_page') }}"
               title="Now-playing preview"></iframe>
       <label>Preview the empty-queue card

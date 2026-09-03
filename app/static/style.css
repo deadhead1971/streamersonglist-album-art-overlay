@@ -191,6 +191,11 @@ table.songs th { color: var(--muted); font-weight: 600; font-size: 13px; }
 .overlay-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 @media (max-width: 900px) { .overlay-layout { grid-template-columns: 1fr; } }
 .overlay-preview h2 { font-size: 16px; margin: 0 0 10px; }
+/* Empty-queue hint under a preview heading. Shown only while the live service
+   reports an empty queue (base.html toggles the class), so it can never sit
+   above a preview that is already full of songs. */
+.preview-hint { display: none; margin: -4px 0 10px; }
+body.queue-empty .preview-hint { display: block; }
 .overlay-preview iframe {
   width: 100%; height: 560px; border: 1px solid var(--line); border-radius: 10px;
   /* checkerboard so transparency is visible */
