@@ -21,6 +21,8 @@ Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
 
 [![Watch the install & setup walkthrough on YouTube](docs/screenshots/install-video-thumbnail.png)](https://www.youtube.com/watch?v=1lnzu5O0h8Q)
 
+▶️ **[Watch the install & setup walkthrough on YouTube](https://www.youtube.com/watch?v=1lnzu5O0h8Q)** — just under 7 minutes.
+
 ![The Songs page: your songlist with confirmed artwork](docs/screenshots/songlist-artwork.png)
 
 ---
