@@ -43,11 +43,22 @@
 
   /* Two stacked faces per tile so a swap cross-fades in place rather than
      blanking. Only opacity and transform animate — never filter or box-shadow,
-     which is what actually melts OBS's Chromium across many elements. */
+     which is what actually melts OBS's Chromium across many elements.
+
+     The stacking order is set per swap rather than left to document order,
+     because the incoming face has to be the one on top: the wall is painted on
+     a transparent page, and a symmetrical cross-fade of two opaque faces is
+     NOT opaque in the middle. Composite alpha is in + out*(1 - in), which
+     bottoms out at 0.75 halfway through — a quarter of the scene behind the
+     browser source ghosting through every tile that swaps, for longer the
+     longer the fade. So swapFace fades the incoming face up over an outgoing
+     one held at full opacity, and only drops it once the cover on top is
+     solid. */
   .face {
     position: absolute;
     inset: 0;
     opacity: 0;
+    z-index: 1;
     transition: opacity var(--fade, 1.2s) ease;
   }
   .face.on { opacity: 1; }
@@ -60,13 +71,35 @@
 
   /* Ken Burns. Each face carries its own duration, direction and negative
      delay, so no two tiles ever move in step — synchronised motion reads as a
-     page refresh rather than as life. */
-  body.drift .face.on img {
+     page refresh rather than as life.
+
+     Both faces drift, never just the visible one. Binding this to `.face.on`
+     tore the animation off the outgoing face and attached it to the incoming
+     one in the same frame, so both images snapped — one back to the origin
+     transform, one forward to wherever its negative delay lands — while the
+     outgoing was still fully opaque. That jump, once per swap_interval, was
+     what read as the wall being glitchy rather than alive. `[src]` keeps the
+     second face out of it until it has actually been swapped in, so a tile
+     that never swaps still only animates one image. */
+  body.drift .face img[src] {
     animation: drift var(--dur, 30s) ease-in-out infinite alternate;
   }
+  /*
+    Magnitudes are set by what the eye can actually resolve, not by what reads
+    as tasteful in a stylesheet. The first pass — scale 1.06 over 20-40s with a
+    2% pan — measured 0.44 px/sec on a 200px tile, about 0.2% of the frame per
+    second, where film Ken Burns runs 1-3%. It was doing exactly what it said
+    and was invisible: with the swap snap fixed, "drift on" and "drift off"
+    were indistinguishable. These numbers put a 320px tile near 2 px/sec.
+
+    The pan is bounded by the zoom: the image only overflows its tile by
+    (scale - 1) / 2 per side, so a translate larger than that drags a
+    transparent edge into frame. 1.16 buys 8% of overflow and the pan uses at
+    most 5%, which leaves room for the two axes to peak together.
+  */
   @keyframes drift {
-    from { transform: scale(1) translate(0, 0); }
-    to   { transform: scale(1.06) translate(var(--dx, 1%), var(--dy, -1%)); }
+    from { transform: scale(1.02) translate(0, 0); }
+    to   { transform: scale(1.16) translate(var(--dx, 3%), var(--dy, -3%)); }
   }
 
   body.breathe .tile {
@@ -96,7 +129,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     .tile, .face { transition: none; }
-    body.drift .face.on img, body.breathe .tile { animation: none; }
+    body.drift .face img[src], body.breathe .tile { animation: none; }
   }
 </style>
 </head>
@@ -113,6 +146,7 @@
   let tiles = [];           // { el, faces:[a,b], active, hash, band, revealed }
   const counts = new Map(); // hash -> how many tiles currently show it
   let tileSize = 512;
+  let fadeMs = 1200;        // mirrors --fade; swapFace times the handover on it
   let swapTimer = null;
   let heroTimer = null;
   let gridCols = 6;
@@ -209,10 +243,16 @@
   }
 
 
+  /*
+    The cycle length is the other half of how fast drift reads — the same
+    excursion over 40s is half the speed of one over 20s, so the old 20-40s
+    spread left the slowest tiles invisible even at a visible magnitude. 16-30s
+    keeps the tiles out of step without letting any of them stall.
+  */
   function driftVars(face, seed) {
-    face.style.setProperty("--dur", (20 + (seed * 7) % 21) + "s");
-    face.style.setProperty("--dx", (((seed * 13) % 5) - 2) + "%");
-    face.style.setProperty("--dy", (((seed * 17) % 5) - 2) + "%");
+    face.style.setProperty("--dur", (16 + (seed * 7) % 15) + "s");
+    face.style.setProperty("--dx", (((seed * 13) % 11) - 5) + "%");
+    face.style.setProperty("--dy", (((seed * 17) % 11) - 5) + "%");
     face.style.animationDelay = "-" + ((seed * 3) % 19) + "s";
   }
 
@@ -263,7 +303,7 @@
     // and swaps may only draw from inside it — that is what keeps a sorted
     // wall sorted.
     const tile = { el: el, faces: [a, b], active: 0, hash: entry.hash,
-                   band: band, revealed: false };
+                   band: band, revealed: false, pending: null };
 
     const img = a.querySelector("img");
     img.addEventListener("load", function () {
@@ -296,14 +336,35 @@
     setTimeout(function () { tile.el.classList.remove("pre"); }, stagger);
   }
 
+  /*
+    Retire the face a previous swap left fading out. A tile picked twice inside
+    one fade would otherwise reuse it as its incoming face while it is still
+    marked `on` — the new cover would pop in with no fade at all, and the
+    pending timeout would then blank the tile.
+  */
+  function settle(tile) {
+    if (!tile.pending) return;
+    clearTimeout(tile.pending.timer);
+    tile.pending.face.classList.remove("on");
+    tile.pending = null;
+  }
+
   function swapFace(tile, entry, onDone) {
+    settle(tile);
     const incoming = tile.faces[1 - tile.active];
     const outgoing = tile.faces[tile.active];
     const img = incoming.querySelector("img");
 
     const apply = function () {
+      // Incoming on top, outgoing held at full opacity underneath it until the
+      // fade has finished — see the .face comment for why both cannot move.
+      incoming.style.zIndex = "2";
+      outgoing.style.zIndex = "1";
       incoming.classList.add("on");
-      outgoing.classList.remove("on");
+      tile.pending = { face: outgoing, timer: setTimeout(function () {
+        tile.pending = null;
+        outgoing.classList.remove("on");
+      }, fadeMs) };
       release(tile.hash);
       take(entry.hash);
       tile.hash = entry.hash;
@@ -417,7 +478,8 @@
     wall.style.setProperty("--cols", opts.columns);
     wall.style.setProperty("--gap", (opts.gap || 0) + "px");
     wall.style.setProperty("--radius", (opts.radius || 0) + "px");
-    wall.style.setProperty("--fade", ((opts.swap_fade || 1200) / 1000) + "s");
+    fadeMs = parseInt(opts.swap_fade, 10) || 1200;
+    wall.style.setProperty("--fade", (fadeMs / 1000) + "s");
     document.body.classList.toggle("drift", !!opts.drift && !reduced);
     document.body.classList.toggle("pick", !!PICK);
     // Breathe animates the same opacity the assemble reveal transitions, and an
