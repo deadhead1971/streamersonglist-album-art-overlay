@@ -1354,7 +1354,7 @@ def save_overlay_settings():
     opts["accent"] = form.get("accent", "#4da3ff").strip() or "#4da3ff"
 
     config.save_config(cfg)
-    return redirect(url_for("overlay_settings_page", saved=1))
+    return redirect(url_for("overlay_settings_page", saved=1) + "#queue-overlay")
 
 
 @app.route("/overlay/current", methods=["POST"])
@@ -1383,7 +1383,8 @@ def save_overlay_current_settings():
     opts["label_text"] = form.get("label_text", "").strip() or "Now playing"
 
     config.save_config(cfg)
-    return redirect(url_for("overlay_settings_page", saved="current"))
+    return redirect(url_for("overlay_settings_page", saved="current")
+                    + "#current-overlay")
 
 
 @app.route("/overlay/promo", methods=["POST"])

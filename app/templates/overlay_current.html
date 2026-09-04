@@ -120,7 +120,7 @@
 <body class="p-{{ opts.preset }} a-{{ opts.animation }} l-{{ opts.layout }}">
 <div id="stage"></div>
 <script>
-  const QS = {{ qs | tojson }};
+  let QS = {{ qs | tojson }};
   const POLL_MS = 5000;
   const stage = document.getElementById("stage");
 
@@ -246,6 +246,10 @@
     }
   }
 
+  // One timer, always — see the note in overlay.html: the settings preview
+  // polls on demand as well as on the clock.
+  let pollTimer = null;
+
   async function poll() {
     try {
       const resp = await fetch("/overlay/current.json" + (QS ? "?" + QS : ""));
@@ -255,9 +259,19 @@
         else render(data);
       }
     } catch (e) { /* dashboard briefly down — keep last render */ }
-    setTimeout(poll, POLL_MS);
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(poll, POLL_MS);
   }
   poll();
+
+  // Live preview: a new query string from the settings page, applied without a
+  // reload. Never fires in OBS — nothing there posts to the overlay.
+  window.addEventListener("message", ev => {
+    if (ev.origin !== location.origin) return;
+    if (!ev.data || typeof ev.data.overlayQs !== "string") return;
+    QS = ev.data.overlayQs;
+    poll();
+  });
 </script>
 </body>
 </html>

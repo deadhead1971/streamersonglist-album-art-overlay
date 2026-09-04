@@ -103,7 +103,7 @@
 <body class="p-{{ opts.preset }} a-{{ opts.animation }}">
 <div id="queue"></div>
 <script>
-  const QS = {{ qs | tojson }};
+  let QS = {{ qs | tojson }};
   const POLL_MS = 5000;
   const queueEl = document.getElementById("queue");
 
@@ -286,6 +286,11 @@
     }
   }
 
+  // One timer, always. The settings preview polls on demand as well as on the
+  // clock, and a second chain of setTimeouts would double the request rate for
+  // the rest of the page's life.
+  let pollTimer = null;
+
   async function poll() {
     try {
       const resp = await fetch("/overlay/queue.json" + (QS ? "?" + QS : ""));
@@ -295,9 +300,26 @@
         else render(data);
       }
     } catch (e) { /* dashboard briefly down — keep last render */ }
-    setTimeout(poll, POLL_MS);
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(poll, POLL_MS);
   }
   poll();
+
+  /*
+    Live preview. The dashboard's overlay settings page hands this page a new
+    query string as the user edits the form, so the preview shows unsaved
+    changes without a reload — the options come back from queue.json exactly as
+    they would for a saved change, so the server's own rules still apply and
+    the preview cannot drift from what a browser source will render.
+
+    Nothing posts to an overlay in OBS, so this never fires there.
+  */
+  window.addEventListener("message", ev => {
+    if (ev.origin !== location.origin) return;
+    if (!ev.data || typeof ev.data.overlayQs !== "string") return;
+    QS = ev.data.overlayQs;
+    poll();
+  });
 </script>
 </body>
 </html>

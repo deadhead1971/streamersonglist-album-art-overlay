@@ -214,6 +214,21 @@ body.queue-empty .preview-hint { display: block; }
    realistic shape to judge — a 16:9 box, matching a normal scene. */
 .overlay-preview.wall-preview iframe { height: auto; aspect-ratio: 16 / 9; }
 
+/* The preview follows the form as it is edited, so it can be showing something
+   OBS is not. That is the one state worth interrupting for: a dashed frame to
+   say "draft", and a bar under it carrying its own Save button, because the
+   form's own button is often off-screen by the time you like what you see. */
+.overlay-preview.drafting iframe { border-color: var(--warn); border-style: dashed; }
+.preview-dirty {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-top: 10px; padding: 10px 14px; border-radius: 8px;
+  background: #332b12; color: var(--warn); font-size: 14px;
+}
+/* display: flex beats the hidden attribute's UA rule, so say it here. */
+.preview-dirty[hidden] { display: none; }
+.preview-dirty span { flex: 1; min-width: 220px; }
+.preview-dirty button { padding: 7px 18px; }
+
 /* Sub-nav: four overlays now share this page, so anchor links keep it
    navigable without splitting it up. Sits directly under the sticky topbar. */
 .subnav {

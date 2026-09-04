@@ -35,7 +35,8 @@
   </div>
 
   <div class="overlay-layout">
-    <form method="post" action="{{ url_for('save_overlay_settings') }}" class="form">
+    <form method="post" action="{{ url_for('save_overlay_settings') }}" class="form"
+          id="queue-form">
       <fieldset>
         <legend>Songs</legend>
         <label>Max songs shown
@@ -143,6 +144,11 @@
         on StreamerSonglist and they'll show up here.</p>
       <iframe id="preview" src="{{ url_for('overlay_queue_page') }}"
               title="Overlay preview"></iframe>
+      <div class="preview-dirty" id="queue-dirty" hidden>
+        <span><strong>Preview only.</strong> These changes aren't saved yet —
+          OBS is still showing your saved settings.</span>
+        <button type="submit" form="queue-form" class="primary">Save</button>
+      </div>
       <label>Preview the empty-queue card
         <select class="promo-demo" data-frame="preview">
           <option value="">off</option>
@@ -193,7 +199,8 @@
   </div>
 
   <div class="overlay-layout overlay-layout-stacked">
-    <form method="post" action="{{ url_for('save_overlay_current_settings') }}" class="form">
+    <form method="post" action="{{ url_for('save_overlay_current_settings') }}" class="form"
+          id="current-form">
       <fieldset>
         <legend>Layout</legend>
         <label>Layout
@@ -267,6 +274,11 @@
         on StreamerSonglist and they'll show up here.</p>
       <iframe id="current-preview" src="{{ url_for('overlay_current_page') }}"
               title="Now-playing preview"></iframe>
+      <div class="preview-dirty" id="current-dirty" hidden>
+        <span><strong>Preview only.</strong> These changes aren't saved yet —
+          OBS is still showing your saved settings.</span>
+        <button type="submit" form="current-form" class="primary">Save</button>
+      </div>
       <label>Preview the empty-queue card
         <select class="promo-demo" data-frame="current-preview">
           <option value="">off</option>
@@ -389,6 +401,11 @@
       <h2>Preview</h2>
       <iframe id="wall-preview" src="{{ url_for('overlay_wall_page', pick=1) }}"
               title="Art wall preview"></iframe>
+      <div class="preview-dirty" id="wall-dirty" hidden>
+        <span><strong>Preview only.</strong> These changes aren't saved yet —
+          OBS is still showing your saved settings.</span>
+        <button type="submit" form="wall-form" class="primary">Save</button>
+      </div>
       <p class="muted">Shown over a checkerboard — in OBS the background is
         transparent. <strong>Click any cover to hide it from the wall.</strong>
         That is saved straight away and applies to the real overlay, not just
@@ -396,7 +413,8 @@
         back with one click under <em>Which covers</em> below.</p>
     </div>
 
-    <form method="post" action="{{ url_for('save_overlay_wall_settings') }}" class="form">
+    <form method="post" action="{{ url_for('save_overlay_wall_settings') }}" class="form"
+          id="wall-form">
       <fieldset>
         <legend>Grid</legend>
         <label>Columns
@@ -513,16 +531,6 @@
 </div>
 
 <script>
-document.querySelectorAll('.promo-demo').forEach(sel => {
-  sel.addEventListener('change', () => {
-    const frame = document.getElementById(sel.dataset.frame);
-    // promo=1 as well, so the card can be styled before that overlay's own
-    // checkbox is ticked; promo_demo pins the state and skips the empty-for
-    // delay, so neither preview waits on your real queue.
-    frame.src = frame.src.split('?')[0]
-      + (sel.value ? '?promo_demo=' + sel.value + '&promo=1' : '');
-  });
-});
 
 /*
   Queue overlay layout. Two jobs, both driven by the direction select.
@@ -685,6 +693,142 @@ document.querySelectorAll('.promo-demo').forEach(sel => {
 
   cols.addEventListener('input', update);
   update();
+})();
+
+/*
+  Live preview. Every field in these three forms already exists as a
+  query-param override on the overlay itself, so the preview re-implements no
+  styling whatsoever: it hands the overlay the form as it currently stands and
+  lets the server apply its own rules — a horizontal strip forcing artwork
+  only, the position number dropping when no text field is on. That is what
+  keeps the preview honest about what a browser source will actually render.
+
+  The cost is that the preview is no longer necessarily what is on stream, so
+  an edited form says so under its own preview, with a Save button where the
+  eye already is.
+
+  The queue and now-playing pages poll their JSON and restyle in place, so they
+  take the new query string by postMessage and never reload. The art wall
+  fetches once and then runs on its own, so it gets a new src instead — and
+  replays its assemble animation, exactly as it does when an OBS scene starts.
+*/
+(function () {
+  const PANELS = [
+    {
+      form: 'queue-form', frame: 'preview', dirty: 'queue-dirty', live: true,
+      bools: {
+        include_current: 'current', show_artwork: 'art', show_position: 'position',
+        show_title: 'title', show_artist: 'artist', show_requester: 'requester',
+        show_promo: 'promo', show_card: 'card'
+      },
+      values: {
+        max_songs: 'max', direction: 'dir', preset: 'preset',
+        font_size: 'font_size', art_size: 'art_size', art_radius: 'art_radius',
+        row_gap: 'row_gap', accent: 'accent', animation: 'anim',
+        anim_speed: 'speed'
+      }
+    },
+    {
+      form: 'current-form', frame: 'current-preview', dirty: 'current-dirty',
+      live: true,
+      bools: {
+        show_artwork: 'art', show_label: 'label', show_title: 'title',
+        show_artist: 'artist', show_requester: 'requester',
+        show_promo: 'promo', hide_when_empty: 'hide_empty'
+      },
+      values: {
+        layout: 'layout', label_text: 'label_text', preset: 'preset',
+        font_size: 'font_size', art_size: 'art_size', accent: 'accent',
+        animation: 'anim', anim_speed: 'speed'
+      },
+      // Saving an empty label falls back to "Now playing", and the override is
+      // ignored when blank — so without this, clearing the box would leave the
+      // old caption sitting in the preview.
+      tweak: p => { if (!p.get('label_text')) p.set('label_text', 'Now playing'); }
+    },
+    {
+      form: 'wall-form', frame: 'wall-preview', dirty: 'wall-dirty', live: false,
+      bools: {
+        dedupe: 'dedupe', drift: 'drift', assemble: 'assemble', breathe: 'breathe'
+      },
+      values: {
+        columns: 'cols', gap: 'gap', radius: 'radius', filter: 'filter',
+        order: 'order', sort_axis: 'axis', swap_interval: 'swap',
+        swap_fade: 'fade', hero_interval: 'hero'
+      },
+      // Click-to-hide is half the point of this preview, and it is not one of
+      // the settings this form saves.
+      tweak: p => p.set('pick', '1')
+    }
+  ];
+
+  // The form's own state, independent of the preview-only controls beside it.
+  const state = form => new URLSearchParams(new FormData(form)).toString();
+
+  PANELS.forEach(spec => {
+    const form = document.getElementById(spec.form);
+    const frame = document.getElementById(spec.frame);
+    if (!form || !frame) return;
+    const dirty = document.getElementById(spec.dirty);
+    const box = frame.closest('.overlay-preview');
+    const demo = document.querySelector(
+      '.promo-demo[data-frame="' + spec.frame + '"]');
+    // The form as saved. Comparing against this rather than latching on the
+    // first keystroke means putting a value back clears the warning.
+    const clean = state(form);
+    let timer = null;
+
+    function params() {
+      const p = new URLSearchParams();
+      for (const name in spec.bools) {
+        const el = form.querySelector('[name="' + name + '"]');
+        if (el) p.set(spec.bools[name], el.checked ? '1' : '0');
+      }
+      for (const name in spec.values) {
+        const el = form.querySelector('[name="' + name + '"]');
+        // A number being typed is momentarily blank. Leave it out and let the
+        // saved value stand, rather than sending nothing for it.
+        if (el && el.value !== '') p.set(spec.values[name], el.value);
+      }
+      if (demo && demo.value) {
+        // promo=1 as well, so the card can be styled before that overlay's own
+        // checkbox is ticked; promo_demo pins the state and skips the empty-for
+        // delay, so neither preview waits on your real queue.
+        p.set('promo_demo', demo.value);
+        p.set('promo', '1');
+      }
+      if (spec.tweak) spec.tweak(p);
+      return p.toString();
+    }
+
+    function apply() {
+      const qs = params();
+      if (spec.live) {
+        frame.contentWindow.postMessage({ overlayQs: qs }, location.origin);
+      } else {
+        frame.src = frame.src.split('?')[0] + (qs ? '?' + qs : '');
+      }
+    }
+
+    function edited() {
+      const unsaved = state(form) !== clean;
+      if (dirty) dirty.hidden = !unsaved;
+      if (box) box.classList.toggle('drafting', unsaved);
+      clearTimeout(timer);
+      // Long enough to sit out a drag on the colour picker or a number being
+      // typed; short enough that the preview feels like it is following you.
+      timer = setTimeout(apply, spec.live ? 250 : 400);
+    }
+
+    form.addEventListener('input', edited);
+    form.addEventListener('change', edited);
+    // The demo card is not a saved setting, so it drives the preview without
+    // touching the unsaved warning.
+    if (demo) demo.addEventListener('change', apply);
+    // A message posted before the iframe has loaded is lost, and a reload
+    // throws away everything unsaved — so re-send on every load.
+    if (spec.live) frame.addEventListener('load', apply);
+  });
 })();
 
 document.querySelectorAll('.copy-btn').forEach(btn => {
