@@ -193,6 +193,10 @@ table.songs th { color: var(--muted); font-weight: 600; font-size: 13px; }
 
 /* Overlay settings page */
 .overlay-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+/* A grid item is min-width:auto by default, so a 1920px-wide preview frame
+   would widen its own column rather than be clipped and scaled by it — and the
+   scale, being the column's width over the source's, would come out as 1. */
+.overlay-layout > * { min-width: 0; }
 @media (max-width: 900px) { .overlay-layout { grid-template-columns: 1fr; } }
 .overlay-preview h2 { font-size: 16px; margin: 0 0 10px; }
 /* Empty-queue hint under a preview heading. Shown only while the live service
@@ -200,25 +204,43 @@ table.songs th { color: var(--muted); font-weight: 600; font-size: 13px; }
    above a preview that is already full of songs. */
 .preview-hint { display: none; margin: -4px 0 10px; }
 body.queue-empty .preview-hint { display: block; }
-.overlay-preview iframe {
-  width: 100%; height: 560px; border: 1px solid var(--line); border-radius: 10px;
-  /* checkerboard so transparency is visible */
+/* A preview is only worth having if it is a true miniature of the browser
+   source. Every overlay setting is in absolute pixels, so a box that merely
+   looks about right renders a different picture: at 9 columns a 20px corner
+   radius is 21% of a 96px tile in a 900px-wide preview and 9.6% of the 208px
+   tile OBS draws at 1920x1080 — the same saved number, half as round on
+   stream. So the iframe is laid out at the real source size and the whole
+   thing is scaled down as one piece. Ratios survive, and what you judge here
+   is what goes out. The stage carries the frame, the corner and the
+   transparency checkerboard, because those belong to the preview rather than
+   to the source and must not shrink with it. */
+.preview-stage {
+  position: relative; overflow: hidden; width: 100%;
+  border: 1px solid var(--line); border-radius: 10px;
   background: repeating-conic-gradient(#2a2e37 0% 25%, #1c1f26 0% 50%) 0 0 / 24px 24px;
 }
-/* Stacked variant: the now-playing card never wraps its text, so its preview
-   needs the panel's full width to accommodate long titles. */
+.overlay-preview iframe {
+  display: block; border: 0;
+  transform-origin: top left;
+  transform: scale(var(--preview-scale, 1));
+}
 .overlay-layout-stacked { grid-template-columns: 1fr; }
-.overlay-layout-stacked .overlay-preview iframe { height: 280px; }
 
-/* The art wall fills whatever source it is given, so its preview has to be a
-   realistic shape to judge — a 16:9 box, matching a normal scene. */
-.overlay-preview.wall-preview iframe { height: auto; aspect-ratio: 16 / 9; }
+/* The source size that scaling is against. Not an overlay setting — it changes
+   nothing OBS reads — so it lives beside the picture, not in the form. */
+.preview-size {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 10px; font-size: 13px; color: var(--muted);
+}
+.preview-size input { width: 82px; padding: 5px 8px; font-size: 13px; }
 
 /* The preview follows the form as it is edited, so it can be showing something
    OBS is not. That is the one state worth interrupting for: a dashed frame to
    say "draft", and a bar under it carrying its own Save button, because the
    form's own button is often off-screen by the time you like what you see. */
-.overlay-preview.drafting iframe { border-color: var(--warn); border-style: dashed; }
+.overlay-preview.drafting .preview-stage {
+  border-color: var(--warn); border-style: dashed;
+}
 .preview-dirty {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   margin-top: 10px; padding: 10px 14px; border-radius: 8px;

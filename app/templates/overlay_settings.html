@@ -142,8 +142,19 @@
       <h2>Preview</h2>
       <p class="muted preview-hint">Your queue is empty — add a few songs
         on StreamerSonglist and they'll show up here.</p>
-      <iframe id="preview" src="{{ url_for('overlay_queue_page') }}"
-              title="Overlay preview"></iframe>
+      <div class="preview-stage">
+        <iframe id="preview" src="{{ url_for('overlay_queue_page') }}"
+                title="Overlay preview"></iframe>
+      </div>
+      <div class="preview-size">
+        <span>OBS source size</span>
+        <input type="number" id="queue-size-w" min="100" max="4096" step="10"
+               aria-label="Source width">
+        <span>×</span>
+        <input type="number" id="queue-size-h" min="100" max="4096" step="10"
+               aria-label="Source height">
+        <span id="queue-scale-note"></span>
+      </div>
       <div class="preview-dirty" id="queue-dirty" hidden>
         <span><strong>Preview only.</strong> These changes aren't saved yet —
           OBS is still showing your saved settings.</span>
@@ -272,8 +283,19 @@
       <h2>Preview</h2>
       <p class="muted preview-hint">Your queue is empty — add a few songs
         on StreamerSonglist and they'll show up here.</p>
-      <iframe id="current-preview" src="{{ url_for('overlay_current_page') }}"
-              title="Now-playing preview"></iframe>
+      <div class="preview-stage">
+        <iframe id="current-preview" src="{{ url_for('overlay_current_page') }}"
+                title="Now-playing preview"></iframe>
+      </div>
+      <div class="preview-size">
+        <span>OBS source size</span>
+        <input type="number" id="current-size-w" min="100" max="4096" step="10"
+               aria-label="Source width">
+        <span>×</span>
+        <input type="number" id="current-size-h" min="100" max="4096" step="10"
+               aria-label="Source height">
+        <span id="current-scale-note"></span>
+      </div>
       <div class="preview-dirty" id="current-dirty" hidden>
         <span><strong>Preview only.</strong> These changes aren't saved yet —
           OBS is still showing your saved settings.</span>
@@ -399,8 +421,19 @@
   <div class="overlay-layout overlay-layout-stacked">
     <div class="overlay-preview wall-preview">
       <h2>Preview</h2>
-      <iframe id="wall-preview" src="{{ url_for('overlay_wall_page', pick=1) }}"
-              title="Art wall preview"></iframe>
+      <div class="preview-stage">
+        <iframe id="wall-preview" src="{{ url_for('overlay_wall_page', pick=1) }}"
+                title="Art wall preview"></iframe>
+      </div>
+      <div class="preview-size">
+        <span>OBS source size</span>
+        <input type="number" id="wall-size-w" min="100" max="4096" step="10"
+               aria-label="Source width">
+        <span>×</span>
+        <input type="number" id="wall-size-h" min="100" max="4096" step="10"
+               aria-label="Source height">
+        <span id="wall-scale-note"></span>
+      </div>
       <div class="preview-dirty" id="wall-dirty" hidden>
         <span><strong>Preview only.</strong> These changes aren't saved yet —
           OBS is still showing your saved settings.</span>
@@ -711,11 +744,17 @@
   take the new query string by postMessage and never reload. The art wall
   fetches once and then runs on its own, so it gets a new src instead — and
   replays its assemble animation, exactly as it does when an OBS scene starts.
+
+  Each frame is also laid out at its real browser-source size and scaled down
+  whole (see rescale below), because every setting on this page is in absolute
+  pixels: a preview merely shaped like the source shows different proportions
+  from the same numbers.
 */
 (function () {
   const PANELS = [
     {
       form: 'queue-form', frame: 'preview', dirty: 'queue-dirty', live: true,
+      size: { key: 'queue', w: 500, h: 800 },
       bools: {
         include_current: 'current', show_artwork: 'art', show_position: 'position',
         show_title: 'title', show_artist: 'artist', show_requester: 'requester',
@@ -731,6 +770,7 @@
     {
       form: 'current-form', frame: 'current-preview', dirty: 'current-dirty',
       live: true,
+      size: { key: 'current', w: 900, h: 220 },
       bools: {
         show_artwork: 'art', show_label: 'label', show_title: 'title',
         show_artist: 'artist', show_requester: 'requester',
@@ -748,6 +788,7 @@
     },
     {
       form: 'wall-form', frame: 'wall-preview', dirty: 'wall-dirty', live: false,
+      size: { key: 'wall', w: 1920, h: 1080 },
       bools: {
         dedupe: 'dedupe', drift: 'drift', assemble: 'assemble', breathe: 'breathe'
       },
@@ -765,6 +806,10 @@
   // The form's own state, independent of the preview-only controls beside it.
   const state = form => new URLSearchParams(new FormData(form)).toString();
 
+  // Each panel's rescale, replayed when the window changes width — the scale
+  // is the panel's width over the source's, so a resized window is a new one.
+  const rescalers = [];
+
   PANELS.forEach(spec => {
     const form = document.getElementById(spec.form);
     const frame = document.getElementById(spec.frame);
@@ -777,6 +822,63 @@
     // first keystroke means putting a value back clears the warning.
     const clean = state(form);
     let timer = null;
+
+    // Lay the frame out at the source's real size and scale the whole thing
+    // down, so every px setting keeps its true proportion. Sizing the box to
+    // the panel instead renders a different picture from the same numbers: at
+    // 9 columns, radius 20 is a fifth of a 96px preview tile and a tenth of
+    // the 208px tile OBS draws at 1920x1080. The size belongs to the
+    // streamer's browser source, which the app cannot know, so it is asked for
+    // here and kept in localStorage — it changes nothing OBS reads, so it has
+    // no business in config.json.
+    const stage = frame.parentElement;
+    const wIn = document.getElementById(spec.size.key + '-size-w');
+    const hIn = document.getElementById(spec.size.key + '-size-h');
+    const note = document.getElementById(spec.size.key + '-scale-note');
+    const store = 'previewSize.' + spec.size.key;
+    const clampPx = (v, fallback) => {
+      const n = parseInt(v, 10);
+      return (n >= 100 && n <= 4096) ? n : fallback;
+    };
+
+    function rescale() {
+      const w = clampPx(wIn.value, spec.size.w);
+      const h = clampPx(hIn.value, spec.size.h);
+      frame.style.width = w + 'px';
+      frame.style.height = h + 'px';
+      // Never past 1:1: scaling an iframe up stretches its raster, and a
+      // preview bigger than the source is the same lie in the other direction.
+      const scale = Math.min(1, stage.clientWidth / w);
+      frame.style.setProperty('--preview-scale', scale);
+      stage.style.height = Math.round(h * scale) + 'px';
+      note.textContent = scale >= 1
+        ? 'shown at actual size'
+        : 'shown at ' + Math.round(scale * 100) + '%';
+    }
+
+    if (stage && wIn && hIn && note) {
+      let saved = null;
+      try { saved = JSON.parse(localStorage.getItem(store)); } catch (e) {}
+      wIn.value = clampPx(saved && saved.w, spec.size.w);
+      hIn.value = clampPx(saved && saved.h, spec.size.h);
+      rescale();
+      rescalers.push(rescale);
+      let sizeTimer = null;
+      [wIn, hIn].forEach(el => {
+        // Debounced, or a width typed digit by digit resizes the frame at
+        // every keystroke on its way to a sane number.
+        el.addEventListener('input', () => {
+          clearTimeout(sizeTimer);
+          sizeTimer = setTimeout(() => {
+            rescale();
+            try {
+              localStorage.setItem(
+                store, JSON.stringify({ w: wIn.value, h: hIn.value }));
+            } catch (e) {}
+          }, 400);
+        });
+      });
+    }
 
     function params() {
       const p = new URLSearchParams();
@@ -828,6 +930,12 @@
     // A message posted before the iframe has loaded is lost, and a reload
     // throws away everything unsaved — so re-send on every load.
     if (spec.live) frame.addEventListener('load', apply);
+  });
+
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => rescalers.forEach(fn => fn()), 150);
   });
 })();
 
