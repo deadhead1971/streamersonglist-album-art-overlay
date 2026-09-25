@@ -4,7 +4,12 @@ An OBS overlay for music streamers: album art for the current song, plus a song
 queue overlay, fed live from your StreamerSonglist queue — automatically.
 
 This tool is for music streamers who use [StreamerSonglist](https://www.streamersonglist.com).
-One app — the **dashboard** — does two jobs:
+
+**[⬇ Download for Windows](https://github.com/deadhead1971/streamersonglist-album-art-overlay/releases/latest)**
+— get `AlbumArtOverlay-Setup-….exe` from the latest release and run it. No
+Python needed. (You can also [run it from source](#run-from-source-python).)
+
+One app — with its **dashboard** in your browser — does two jobs:
 
 - **Between streams** it pulls your songlist from StreamerSonglist, finds album
   artwork for every song, and lets you confirm, reject, or upload your own image
@@ -29,13 +34,8 @@ Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
 
 ## 1. What you need
 
-- **Windows** (built and tested there; the file-saving is tuned for OBS on
-  Windows). **macOS/Linux should work but are untested** — it's plain Python.
-  The `.bat` launcher is Windows-only, so start it from a terminal instead:
-  `python3 -m app.dashboard`. If you try it, let me know how it goes via an
-  issue!
-- **Python 3.10 or newer**. Get it from [python.org](https://www.python.org/downloads/).
-  During install, tick **"Add Python to PATH"**.
+- **Windows 10 or 11.** The download is a Windows app. (Running from source,
+  macOS and Linux should work but are untested — see below.)
 - A **StreamerSonglist** account with some songs in your list. During a stream,
   keep the song you're playing in your SSL **now-playing** slot (or at the top of
   the queue — SSL promotes it for you). (Alternatively, point it at a text file
@@ -46,11 +46,40 @@ Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
 
 ## 2. Install
 
-Download/clone this repository, open a terminal in the folder, and run:
+### Download for Windows (recommended)
 
-```
-pip install -r requirements.txt
-```
+1. Open the [latest release](https://github.com/deadhead1971/streamersonglist-album-art-overlay/releases/latest)
+   and download **`AlbumArtOverlay-Setup-x.y.z.exe`**.
+2. Your browser may say the file **isn't commonly downloaded**. Choose **Keep**
+   (in Edge it's under the **…** menu next to the download).
+3. Run it. Windows may show **"Windows protected your PC"**. Click **More
+   info**, then **Run anyway**.
+
+   Why the warnings? The app isn't code-signed yet, so Windows doesn't know
+   the publisher, and every new version starts out unknown to it. The source
+   code is all here, and each release lists a **SHA256** checksum for the
+   installer if you want to check your download.
+4. The installer doesn't ask for admin rights. Click **Install**, leave
+   **Launch Album Art Overlay** ticked, then **Finish**.
+
+You'll find **Album Art Overlay** in your Start menu and on your desktop.
+
+### Run from source (Python)
+
+For macOS/Linux, or if you'd rather run the code directly.
+
+1. Install **Python 3.10 or newer** from [python.org](https://www.python.org/downloads/).
+   During install, tick **"Add Python to PATH"**.
+2. Download or clone this repository, open a terminal in the folder, and run:
+
+   ```
+   pip install -r requirements.txt
+   ```
+3. Start it with **`run_dashboard.bat`** (Windows) or `python -m app.dashboard`
+   (`python3` on macOS/Linux). Keep that window open while you use the app.
+
+Everything else in this guide is the same either way. Where it differs, it
+says so.
 
 ## 3. Get your StreamerSonglist API token
 
@@ -74,18 +103,20 @@ you have — they look identical, so it can't tell on its own. Either works:
 If you're not sure which kind you have, paste it and click **Test connection** —
 the app tries the other type for you and sets the field to whichever works.
 
-Keep it private. It's stored only in your local `config.json` (which is never
-committed to git) and sent only to StreamerSonglist. Treat it like a password:
+Keep it private. It's stored only in your local `config.json` (see
+[Where your files live](#where-your-files-live)) and sent only to StreamerSonglist. Treat it like a password:
 it can read *and* write every channel your account administrates, so don't paste
 it into screenshots, streams, or bug reports. If it ever leaks, create a new one
 from the same page.
 
 ## 4. First run — the dashboard
 
-Double-click **`run_dashboard.bat`** (or run `python -m app.dashboard`).
+Start **Album Art Overlay** from the Start menu or your desktop (from source:
+`run_dashboard.bat`).
 
-- On the very first run it creates a `config.json` for you and opens the
-  **Settings** page in your browser at `http://127.0.0.1:5050`.
+- On the very first run it creates your settings and opens the **Settings**
+  page in your browser at `http://127.0.0.1:5050`. The downloaded app also puts
+  an icon in the **system tray** (bottom right, by the clock) and says so once.
 - Fill in:
   - **Username or songlist URL** — e.g. `yourname` or
     `https://www.streamersonglist.com/t/yourname/songs`.
@@ -100,7 +131,10 @@ Double-click **`run_dashboard.bat`** (or run `python -m app.dashboard`).
     the live service reads the top of your live queue. Only switch to **Text
     file** if another tool writes your current song to a file, and set its path
     below.
-  - **Output image** — where the artwork PNG should be written (point OBS at this).
+  - **Output image** — where the artwork PNG should be written. Point an OBS
+    **Image** source at it; **Copy path** puts it on your clipboard. The
+    downloaded app fills this in for you, inside its data folder, and you can
+    leave it there.
   - **Fallback image** — shown for your own originals and for songs with no art.
   - **Skip artists** — your own artist name(s), comma separated. Songs by these
     artists use the fallback image instead of searching.
@@ -137,7 +171,14 @@ The keyboard shortcuts make reviewing a long list fast.
 
 ## 6. During your stream
 
-Keep the **dashboard** (`run_dashboard.bat`) running while you're live. It runs
+Keep the app running while you're live. The downloaded app **lives in the
+system tray**: closing the browser tab doesn't stop it, and your overlays keep
+working. Click the tray icon to open the dashboard again, or start the app from
+the Start menu again, which just reopens the dashboard. To stop it, right-click
+the tray icon and choose **Quit** (or use **Quit app** at the bottom of
+Settings). From source, keep the `run_dashboard.bat` window open instead.
+
+It runs
 a built-in live service that watches your StreamerSonglist queue and, whenever
 the now-playing song changes, writes the artwork image for OBS — normally
 within about half a second. Play through your queue as usual and the artwork
@@ -245,7 +286,8 @@ A few things worth knowing:
 
 ## 7. Your artwork library
 
-Images live in the `library/` folder, named `Artist - Title.png`, at full
+Images live in the `library` folder inside your data folder (see
+[Where your files live](#where-your-files-live)), named `Artist - Title.png`, at full
 resolution. Resizing and the reflection effect happen when the image is written for
 OBS, so changing the image size or reflection settings never means re-fetching.
 
@@ -265,7 +307,8 @@ library at all rather than start it over, and the banner explains what's wrong.
 **Sharper covers for older libraries.** Earlier versions saved iTunes covers at
 600×600, a little smaller than the image written for OBS. New ones are saved at
 1000×1000. To re-fetch the covers you already have at that size, without
-re-reviewing anything, close the dashboard and run:
+re-reviewing anything, close the dashboard and run this from the source folder
+(the tools come with the Python version, not the download):
 
 ```
 python -m tools.upgrade_art           # shows what it would do, changes nothing
@@ -279,7 +322,7 @@ cover.
 
 ## 8. Staying up to date
 
-When the dashboard starts it asks GitHub whether there is a newer release. If
+When the app starts it asks GitHub whether there is a newer release. If
 there is, a banner appears at the top of every dashboard page with the version,
 what the release is called, and a link to the full notes. It never appears on
 your overlays — those are separate pages, so nothing can show up in OBS or on
@@ -287,9 +330,14 @@ stream.
 
 **Dismiss** hides it for that version only. The next release brings it back.
 
-To update, download the new version (or `git pull` if you cloned), then restart
-the dashboard. Check the release notes for whether you also need to re-run
-`pip install -r requirements.txt` or refresh your OBS browser sources.
+**Downloaded app:** click **Download update** in the banner and run the
+installer. It closes the running app for you, keeps your library and settings,
+and starts the new version when you click Finish. Your OBS sources keep
+working, because nothing they point at moves.
+
+**From source:** download the new version (or `git pull` if you cloned), then
+restart the dashboard. Check the release notes for whether you also need to
+re-run `pip install -r requirements.txt` or refresh your OBS browser sources.
 
 The check is a single anonymous request to `api.github.com`. It sends nothing
 about you, your songlist or your library — only the app's name and version. Turn
@@ -297,24 +345,89 @@ it off under **Settings → Updates** if you'd rather check
 [the releases page](https://github.com/deadhead1971/streamersonglist-album-art-overlay/releases)
 yourself, and use **Check now** on that same page any time.
 
+## Where your files live
+
+| | Downloaded app | From source |
+|---|---|---|
+| Your data | `%LOCALAPPDATA%\AlbumArtOverlay` (paste that into Explorer's address bar) | the project folder |
+| The app itself | `%LOCALAPPDATA%\Programs\Album Art Overlay` | the project folder |
+
+Your data is:
+- `config.json`: your settings, including your API token
+- `library\`: your artwork and your review decisions
+- `artwork_fetcher.log`: the log
+- `obs\`: the OBS loaders (downloaded app only; from source they're in the
+  project folder's `obs\`)
+
+**Settings → Your files** shows these paths with **Open** and **Copy**
+buttons, and the tray menu has **Open data folder** and **Open log folder**.
+
+**Backing up:** quit the app, then copy the whole data folder somewhere safe.
+Your artwork choices are the part worth keeping. They take time to make, and
+the app can't recreate them.
+
+## Moving from the Python version
+
+If you've been running from source and want the downloaded app instead:
+
+1. Quit the Python version (close its window).
+2. If you set it up before version 1.7, optionally run
+   `python -m tools.upgrade_art --apply` first for sharper covers (section 7).
+   The downloaded app doesn't include the tools.
+3. Install the app, let it start, then **Quit** it from the tray icon.
+4. Copy `config.json` and the `library` folder from your project folder into
+   `%LOCALAPPDATA%\AlbumArtOverlay`, replacing what's there.
+5. Start the app. Everything is where you left it.
+
+Your OBS **Image** source keeps working, because the output image path in your
+settings doesn't change. Your OBS browser sources keep working too, as long as
+you keep the old folder: its loaders only point at the app's address. To tidy
+up, re-point them at the loaders shown on the **Overlay** page (**Copy path**),
+and then you can delete the old folder.
+
+## Uninstalling
+
+**Windows Settings → Apps**, find **Album Art Overlay**, and choose **Uninstall**.
+This removes the program but **keeps your data folder**, so a reinstall picks
+up where you left off. To remove everything, delete
+`%LOCALAPPDATA%\AlbumArtOverlay` afterwards too.
+
 ## Files in this repo
 
 | File | What it does |
 |------|--------------|
-| `run_dashboard.bat` | Start the dashboard (also run this during streams). |
+| `run_dashboard.bat` | Start the dashboard from source (also run this during streams). |
 | `config.example.json` | Template copied to `config.json` on first run. |
 | `app/` | The application code. |
 | `tools/probe_api.py` | Diagnostic: checks that StreamerSonglist is answering and whether your token works. |
 | `tools/upgrade_art.py` | Re-fetches the iTunes covers already in your library at the current, larger size (see section 7). |
 | `tools/release.py` | For maintainers: bumps the version, commits and tags a release. |
+| `packaging/` | For maintainers: builds the Windows app and its installer. |
 
 `config.json` (which holds your API token), your `library/`, and logs are **not**
 committed to git — they're yours and local.
 
 ## Troubleshooting
 
-- **`python` not found** — reinstall Python with "Add Python to PATH" ticked, or
-  reopen your terminal.
+- **I can't find the tray icon** — Windows 11 tucks new icons away under the
+  **^** arrow by the clock. Drag the icon out onto the taskbar to keep it in
+  view. You don't need it day to day: starting the app from the Start menu
+  opens the dashboard, and Settings has a **Quit app** button.
+- **My antivirus deleted or blocked the app** — some antivirus products are
+  wary of new, unsigned programs. Restore it from the antivirus quarantine and
+  mark it as allowed, or reinstall. If it keeps happening, please open an issue
+  and say which antivirus you use.
+- **"Another program is already using port 5050"** — the app talks to your
+  browser and OBS on port 5050, and something else has it. Close that program
+  (a second copy of this app from source counts), then start the app again.
+- **The artwork image never updates, and the log says "Permission denied" or
+  "Access is denied"** — Windows **Controlled folder access** (part of
+  ransomware protection) blocks unknown apps from writing to Documents, Pictures
+  and the Desktop. Point **Output image** at a folder outside those, such as
+  the default in the app's data folder, or allow the app under Windows Security
+  → Virus & threat protection → Ransomware protection.
+- **`python` not found** (from source) — reinstall Python with "Add Python to
+  PATH" ticked, or reopen your terminal.
 - **Test connection fails** — most often a missing or mistyped **API token**
   (step 3); the app will say so if that's the cause. Otherwise check the
   username/URL — you can also paste your full songlist URL.
@@ -334,9 +447,9 @@ committed to git — they're yours and local.
   edited that file by hand, the banner says which line to fix; otherwise put
   back a copy from your own backups. The dashboard notices the fix without a
   restart.
-- **Is StreamerSonglist answering?** — run `python -m tools.probe_api` for a
-  quick read-out of the API host, your channel and your queue. It never prints
-  your token.
+- **Is StreamerSonglist answering?** — from source, run
+  `python -m tools.probe_api` for a quick read-out of the API host, your channel
+  and your queue. It never prints your token.
 - **No artwork for a song** — use **Reject → next** to try other sources, or
   **Upload** your own image.
 - **Last.fm is skipped** — that's expected unless you add your own free API key in
@@ -353,4 +466,6 @@ committed to git — they're yours and local.
   pulls in `protobuf`, which some other tools (TensorFlow, Google APIs) pin to
   an older version. If that affects you, run `pip install "protobuf<6"`
   afterwards, or install this app in its own virtual environment.
-- **Logs** — see `artwork_fetcher.log` in the project folder.
+- **Logs** — `artwork_fetcher.log` in your data folder. The tray menu's **Open
+  log folder** takes you there. Attach it to a bug report; it never contains
+  your token.
