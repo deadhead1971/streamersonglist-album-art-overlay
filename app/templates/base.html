@@ -161,6 +161,7 @@
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             kind: btn.dataset.kind,
+            current: input.value,
             initialfile: btn.dataset.initialfile || '',
             filetypes: btn.dataset.filetypes || ''
           })
@@ -169,6 +170,17 @@
         if (d.ok && d.path) input.value = d.path.replace(/\//g, '\\');
       } catch (e) { /* dialog cancelled or failed — leave the field as is */ }
       btn.disabled = false;
+    });
+  });
+  // "Copy" buttons for any read-only path/URL field: data-copy is the field's id.
+  document.querySelectorAll('.copy-btn').forEach(btn => {
+    const label = btn.textContent;
+    btn.addEventListener('click', async () => {
+      const input = document.getElementById(btn.dataset.copy);
+      input.select();
+      try { await navigator.clipboard.writeText(input.value); } catch (e) { document.execCommand('copy'); }
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = label, 1500);
     });
   });
   </script>

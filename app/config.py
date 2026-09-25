@@ -1,7 +1,8 @@
 """
 Configuration loading/saving.
 
-config.json lives in the repo root and is gitignored. On first run there is no
+config.json lives in the data folder (the repo root when run from source, where
+it is gitignored; see DATA_DIR below). On first run there is no
 config.json; ``ensure_config()`` copies ``config.example.json`` into place so the
 app can start and send the user to the settings page instead of crashing.
 
@@ -9,18 +10,67 @@ All the hardcoded constants from the v2 script live here as config values.
 """
 
 import json
+import os
 import shutil
+import sys
 from pathlib import Path
 
 from . import __version__, fileio
 
-# Repo root = parent of the app package directory.
-ROOT = Path(__file__).resolve().parent.parent
+# Two roots, because a packaged build separates them. RESOURCE_DIR holds what
+# ships with the app and is only ever read (config.example.json, the OBS
+# loaders); DATA_DIR holds everything the app writes. From source both are the
+# repo root, exactly as before. Frozen (PyInstaller), the resources sit inside
+# the program folder, which an upgrade replaces wholesale — user data written
+# there would be wiped by the next install — so data goes to LOCALAPPDATA:
+# per-user, no admin rights, never synced by OneDrive (the output PNG is
+# rewritten on every song change), and not guarded by Controlled Folder Access.
+FROZEN = bool(getattr(sys, "frozen", False))
 
-CONFIG_PATH = ROOT / "config.json"
-EXAMPLE_PATH = ROOT / "config.example.json"
+APP_DIR_NAME = "AlbumArtOverlay"
 
-LIBRARY_DIR = ROOT / "library"
+
+def _resource_dir() -> Path:
+    if FROZEN:
+        # PyInstaller's unpacked bundle (the _internal folder in one-folder
+        # mode); __file__ would point there too, but only by accident.
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    return Path(__file__).resolve().parent.parent
+
+
+def _data_dir() -> Path:
+    # An explicit override wins in every mode: CI and tests point it at a
+    # scratch folder, and tools/ can run against an installed copy's data.
+    override = os.environ.get("ALBUMART_DATA_DIR", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    if FROZEN:
+        base = os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local"
+        return Path(base) / APP_DIR_NAME
+    return _resource_dir()
+
+
+RESOURCE_DIR = _resource_dir()
+DATA_DIR = _data_dir()
+# True for an installed copy (or a source run with ALBUMART_DATA_DIR set): the
+# data folder is not where the app's own files live, so the OBS loaders are
+# copied out and first-run defaults point into the data folder.
+SEPARATE_DATA_DIR = RESOURCE_DIR != DATA_DIR
+
+CONFIG_PATH = DATA_DIR / "config.json"
+EXAMPLE_PATH = RESOURCE_DIR / "config.example.json"
+
+# The OBS browser-source loaders. OBS stores the absolute path, so it has to
+# stay put across upgrades: an installed copy serves them from the data folder
+# (see dashboard.sync_obs_loaders), a source run straight from the repo.
+BUNDLED_OBS_DIR = RESOURCE_DIR / "obs"
+OBS_DIR = DATA_DIR / "obs"
+
+# Where a fresh installed copy writes the OBS image source's PNG until the user
+# picks somewhere else. Only used as a first-run default (see ensure_config).
+DEFAULT_OUTPUT_IMAGE = DATA_DIR / "current_artwork.png"
+
+LIBRARY_DIR = DATA_DIR / "library"
 MANIFEST_PATH = LIBRARY_DIR / "manifest.json"
 
 # Art wall thumbnail cache. Named by image content hash, so identical artwork
@@ -29,7 +79,7 @@ MANIFEST_PATH = LIBRARY_DIR / "manifest.json"
 # is already gitignored.
 THUMBS_DIR = LIBRARY_DIR / "thumbs"
 
-LOG_FILE = ROOT / "artwork_fetcher.log"
+LOG_FILE = DATA_DIR / "artwork_fetcher.log"
 
 # MusicBrainz asks that the User-Agent identify the app + a contact URL. Identify
 # the tool and its repo, not the streamer running it. Built from __version__ so
@@ -238,10 +288,22 @@ def ensure_config() -> bool:
     if CONFIG_PATH.exists():
         return False
 
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     if EXAMPLE_PATH.exists():
         shutil.copyfile(EXAMPLE_PATH, CONFIG_PATH)
     else:
         save_config(DEFAULT_CONFIG)
+
+    if SEPARATE_DATA_DIR:
+        # An installed copy starts with an output image already chosen, so the
+        # live PNG works before the user has visited Settings, and it lands in
+        # the data folder rather than Documents or the Desktop, which OneDrive
+        # syncs and Controlled Folder Access can block. A source install keeps
+        # today's blank field.
+        cfg = load_config()
+        if not cfg.get("output_image"):
+            cfg["output_image"] = str(DEFAULT_OUTPUT_IMAGE)
+            save_config(cfg)
     return True
 
 

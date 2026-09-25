@@ -81,19 +81,25 @@ def setup_logging():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError, OSError):
         pass
+    # An installed copy's data folder may not exist yet on its first launch.
+    config.LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    handlers = [
+        # Rotated, not open-ended: a fault that logs on every overlay poll
+        # (a rejected token used to) writes thousands of identical lines an
+        # hour, and this file had reached 10 MB before anyone looked at it.
+        # Four files, so a session's history survives without unbounded
+        # growth.
+        RotatingFileHandler(config.LOG_FILE, maxBytes=2_000_000,
+                            backupCount=3, encoding="utf-8"),
+    ]
+    # A windowed build (the packaged tray app, or pythonw) has no console and
+    # sys.stdout is None; a StreamHandler on it raises inside every emit.
+    if sys.stdout is not None:
+        handlers.append(logging.StreamHandler(sys.stdout))
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            # Rotated, not open-ended: a fault that logs on every overlay poll
-            # (a rejected token used to) writes thousands of identical lines an
-            # hour, and this file had reached 10 MB before anyone looked at it.
-            # Four files, so a session's history survives without unbounded
-            # growth.
-            RotatingFileHandler(config.LOG_FILE, maxBytes=2_000_000,
-                                backupCount=3, encoding="utf-8"),
-            logging.StreamHandler(sys.stdout),
-        ],
+        handlers=handlers,
     )
     # On the logger, not the handlers: Logger.handle() applies its own filters
     # before propagating, so this keeps the polling lines out of the file and

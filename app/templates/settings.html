@@ -160,11 +160,13 @@
       </div>
       <label>Output image (what OBS displays)
         <span class="path-row">
-          <input type="text" name="output_image" value="{{ cfg.output_image }}"
+          <input type="text" name="output_image" id="output_image" value="{{ cfg.output_image }}"
                  placeholder="C:\path\to\current_artwork.png">
           <button type="button" class="secondary browse-btn" data-target="output_image"
                   data-kind="save" data-initialfile="current_artwork.png"
                   data-filetypes="PNG image:*.png">Browse…</button>
+          <button type="button" class="secondary copy-btn" data-copy="output_image"
+                  title="Copy for OBS's Image source">Copy path</button>
         </span></label>
       <label>Fallback image (shown for your own songs / misses)
         <span class="path-row">

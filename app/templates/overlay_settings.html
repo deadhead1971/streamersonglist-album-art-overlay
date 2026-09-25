@@ -939,14 +939,5 @@
   });
 })();
 
-document.querySelectorAll('.copy-btn').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const input = document.getElementById(btn.dataset.copy);
-    input.select();
-    try { await navigator.clipboard.writeText(input.value); } catch (e) { document.execCommand('copy'); }
-    btn.textContent = 'Copied!';
-    setTimeout(() => btn.textContent = 'Copy URL', 1500);
-  });
-});
 </script>
 {% endblock %}
