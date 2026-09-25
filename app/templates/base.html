@@ -39,6 +39,21 @@
       } else {
         banner.hidden = true;
       }
+      // The library's manifest couldn't be read (nothing is saved until it is
+      // fixed), or was restored from its backup (said once, until restart).
+      const lib = d.library;
+      const libBanner = document.getElementById('library-banner');
+      if (lib) {
+        const broken = lib.level === 'error';
+        document.getElementById('library-banner-title').textContent = broken
+          ? "Your artwork library can't be read"
+          : 'Your artwork library was restored from its backup';
+        document.getElementById('library-banner-text').textContent = lib.message;
+        libBanner.classList.toggle('warn', !broken);
+        libBanner.hidden = false;
+      } else {
+        libBanner.hidden = true;
+      }
       if (d.running) {
         const song = d.current_title
           ? `▶ ${d.current_title}${d.current_artist ? ' — ' + d.current_artist : ''}`
@@ -69,6 +84,16 @@
   pollRuntimeStatus();
   </script>
   <main>
+    <!-- Artwork library fault or restore notice, from the same poll. First,
+         because while it is red nothing the user does here can be saved. -->
+    <div id="library-banner" class="runtime-banner" hidden>
+      <span class="runtime-banner-icon">⚠</span>
+      <div class="update-body">
+        <strong id="library-banner-title"></strong>
+        <div class="small" id="library-banner-text"></div>
+      </div>
+    </div>
+
     <!-- Live-service fault. Above the update banner on purpose: overlays that
          are showing nothing right now outrank a new release. Filled in by
          pollRuntimeStatus, and it disappears by itself once a poll succeeds. -->

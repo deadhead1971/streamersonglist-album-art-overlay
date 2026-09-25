@@ -24,7 +24,8 @@ from flask import (
 from PIL import Image
 
 from . import (
-    __version__, artwork, config, imaging, library, runtime, songlist, updates,
+    __version__, artwork, config, imaging, library, runtime, songlist, sources,
+    updates,
 )
 from .library import (
     Library, STATUS_PROPOSED, STATUS_UNVERIFIED,
@@ -40,6 +41,18 @@ app = Flask(__name__)
 def inject_version():
     """Every page footer/banner can show which version is running."""
     return {"app_version": __version__}
+
+
+@app.errorhandler(library.ManifestUnreadable)
+def manifest_unreadable(e):
+    """
+    Any request that needs the library while its manifest can't be read ends
+    here, before it could save anything — which is the point. The banner on
+    every dashboard page carries the same message.
+    """
+    if request.path.startswith("/api/") or request.path.endswith(".json"):
+        return jsonify({"ok": False, "error": str(e)}), 503
+    return app.response_class(str(e), status=503, mimetype="text/plain")
 
 
 # Snapshot of the last fetched songlist (for the songs table). Lives beside the
@@ -175,7 +188,14 @@ class ProposeJob:
 
     def _run(self, cfg: dict, keys: list = None):
         # Fresh Library instance for the worker thread.
-        lib = Library()
+        try:
+            lib = Library()
+        except library.ManifestUnreadable:
+            # Already logged, and bannered on every dashboard page. Proposing
+            # into an unreadable manifest would start the library over.
+            with self.lock:
+                self.running = False
+            return
         candidates = (
             lib.all_entries().items() if keys is None
             else [(k, lib.get_by_key(k)) for k in keys]
@@ -234,6 +254,10 @@ def entry_view(lib: Library, key: str, entry: dict) -> dict:
         {
             "index": i,
             "url": c.get("url"),
+            # What the gallery tile loads: an iTunes candidate is 1000px, and a
+            # page of them is megabytes for tiles 150px wide.
+            "preview": sources.itunes_art_url(c.get("url"),
+                                              sources.ITUNES_PREVIEW_SIZE),
             "source": c.get("source"),
             "album": c.get("album"),
             "similarity": c.get("similarity"),
@@ -315,6 +339,8 @@ def _verify_saved_credential(cfg: dict, previous_token: str) -> dict:
         password manager filling the box, which is what this form's
         username+password shape invites) must not be able to replace a
         working token.
+      * SSL has no such channel       → save (the user typed that name), and
+        say it is the username that is wrong, not the token
       * the check itself fails        → not a verdict: save, and say it could
         not be checked
     """
@@ -333,6 +359,9 @@ def _verify_saved_credential(cfg: dict, previous_token: str) -> dict:
                                    f"saved — the one that was already stored "
                                    f"is still in use."}
         return {"token_error": str(e)}
+    except songlist.StreamerNotFound as e:
+        # Before the generic branch, which would blame the token for this.
+        return {"username_error": str(e)}
     except requests.RequestException as e:
         return {"token_warning": f"Saved, but the token could not be checked "
                                  f"just now: {e}"}
@@ -412,9 +441,6 @@ def save_settings():
         form.get("updates_check_enabled") == "on"
     )
 
-    # Host/token/platform may have changed — re-probe which API is live. This
-    # comes before the check below so it can't answer from a cached verdict.
-    songlist.reset_backend()
     notice = _verify_saved_credential(cfg, previous_token)
 
     config.save_config(cfg)
@@ -529,7 +555,6 @@ def api_test_connection():
         return jsonify({"ok": True, "id": sid,
                         "name": streamer.get("name"),
                         "avatar": streamer.get("avatar"),
-                        "backend": streamer.get("backend"),
                         "token_type": token_type,
                         "token_type_changed": token_type != asked_for,
                         "song_count": songlist.fetch_song_count(sid, cfg=cfg)})
@@ -760,7 +785,10 @@ def api_update_skip():
 
 @app.route("/api/runtime/status")
 def api_runtime_status():
-    return jsonify(runtime.service.status())
+    status = runtime.service.status()
+    # Every dashboard page polls this, so the library's banner rides along.
+    status["library"] = library.manifest_problem()
+    return jsonify(status)
 
 
 # Statuses whose stored image the overlay will show (rejected_all means the
@@ -952,9 +980,21 @@ def wall_tiles(cfg: dict, opts: dict) -> list:
                                opts.get("order", "shuffle"))
 
 
-def _resolve_art(lib: Library, title: str, artist: str) -> str:
+def _overlay_library():
+    """
+    The library for an overlay render, or None when its manifest can't be
+    read. The overlay then shows the fallback image in place of each cover —
+    never an error on stream, and never a failing poll every few seconds.
+    """
+    try:
+        return Library()
+    except library.ManifestUnreadable:
+        return None
+
+
+def _resolve_art(lib, title: str, artist: str) -> str:
     """URL of the stored artwork for a song, or the overlay fallback image."""
-    entry = lib.get(title, artist)
+    entry = lib.get(title, artist) if lib is not None else None
     if (entry and entry.get("status") in _OVERLAY_STATUSES
             and lib.has_image(entry)):
         return url_for("serve_image", key=normalize_key(title, artist),
@@ -969,8 +1009,8 @@ _AVATAR_CACHE = {"key": None, "url": None}
 
 def _streamer_avatar(cfg: dict):
     """
-    The streamer's avatar URL (v2 API only — v1 hands out no avatar), from the
-    runtime service if it is up, else resolved and cached here.
+    The streamer's avatar URL, from the runtime service if it is up, else
+    resolved and cached here.
     """
     url = runtime.service.status().get("avatar")
     if url:
@@ -1045,8 +1085,8 @@ def _promo_item(cfg: dict, opts: dict, args):
         if empty_for is None or empty_for < delay:
             return None
 
-    # Only a definite "closed" picks the closed card. Unknown — v1, no username,
-    # or a check that has never succeeded — reads as open: losing the card on a
+    # Only a definite "closed" picks the closed card. Unknown — no username, or
+    # a check that has never succeeded — reads as open: losing the card on a
     # failed API read is worse than showing it a minute after requests shut.
     if demo in ("open", "closed"):
         active = demo == "open"
@@ -1100,15 +1140,15 @@ def overlay_queue_json():
     cfg = config.load_config()
     opts = overlay_options(cfg, request.args)
 
-    # `upcoming` excludes the now-playing song on both backends, so the
-    # now-playing card is prepended rather than the list being sliced.
+    # `upcoming` excludes the now-playing song, so the now-playing card is
+    # prepended rather than the list being sliced.
     playing, upcoming = runtime.service.get_queue(cfg)
     items = list(upcoming)
     if opts["include_current"] and playing is not None:
         items.insert(0, playing)
     items = items[: opts["max_songs"]]
 
-    lib = Library()
+    lib = _overlay_library()
     rows = []
     # Display numbering, not the API's: v2 numbers the now-playing song 0 and
     # restarts the upcoming queue at 1. Excluding the current song still starts
@@ -1166,7 +1206,8 @@ def overlay_current_json():
     item = playing if playing is not None else (upcoming[0] if upcoming else None)
     view = songlist.queue_item_view(item, 1) if item is not None else None
     if view is not None:
-        view["art"] = _resolve_art(Library(), view["title"], view["artist"])
+        view["art"] = _resolve_art(_overlay_library(), view["title"],
+                                   view["artist"])
     else:
         # Promo card wins over hide_when_empty: showing something is the point.
         view = _promo_item(cfg, opts, request.args)
@@ -1502,6 +1543,12 @@ def run(host="127.0.0.1", port=5050, open_browser=True):
         raise SystemExit(1)
 
     first_run = config.ensure_config()
+    # Load the manifest before anything can write to it, so a damaged one is
+    # restored from its backup (or reported) now rather than mid-stream.
+    try:
+        Library()
+    except library.ManifestUnreadable:
+        pass  # logged by the library, and bannered on every dashboard page
     cfg = config.load_config()
     updates.start_background_check(cfg)
     if _runtime_wanted(cfg):

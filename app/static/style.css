@@ -173,6 +173,11 @@ table.songs th { color: var(--muted); font-weight: 600; font-size: 13px; }
 .runtime-banner-icon { font-size: 18px; color: var(--err); }
 .runtime-banner .small { color: #f0c7c7; }
 .runtime-banner a { color: var(--text); }
+/* Amber variant: something happened that the user should know about, but
+   nothing is broken now (the library banner after a restore from backup). */
+.runtime-banner.warn { background: #332b12; border-color: var(--warn); }
+.runtime-banner.warn .runtime-banner-icon { color: var(--warn); }
+.runtime-banner.warn .small { color: #efe2bd; }
 
 /* Update banner. First child of <main>, so it inherits the same centred
    column as the panels and lines up with them. */

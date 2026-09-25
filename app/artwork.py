@@ -227,7 +227,9 @@ def resolve_artwork_for_song(cfg: dict, lib, song: str, artist: str) -> bool:
 
 def try_download(candidate: dict):
     """Download a candidate's image, returning raw bytes or None on failure."""
-    url = candidate.get("url")
+    # Candidate pools saved before the iTunes size went up still carry the old,
+    # smaller URL; picking one of those now fetches it at today's size.
+    url = sources.itunes_art_url(candidate.get("url"))
     if not url:
         return None
     try:
@@ -252,7 +254,9 @@ def store_candidate(lib, title: str, artist: str, candidate: dict,
 
     png = imaging.to_png_bytes(raw_bytes)
     entry = lib.ensure_entry(title, artist)
-    fname = lib.save_image_bytes(title, artist, png)
+    # Before the fields below change: whether the old file may be overwritten
+    # depends on the entry's status and source as they are now.
+    fname = lib.save_image_bytes(entry, png)
 
     entry["file"] = fname
     entry["source"] = candidate.get("source")
@@ -473,7 +477,7 @@ def store_upload(lib, entry: dict, raw_bytes: bytes) -> None:
     between the two review lists; everything else lands on proposed.
     """
     png = imaging.to_png_bytes(raw_bytes)
-    fname = lib.save_image_bytes(entry["title"], entry["artist"], png)
+    fname = lib.save_image_bytes(entry, png)
     entry["file"] = fname
     entry["source"] = "manual"
     entry["candidate_index"] = -1  # a manual upload isn't one of the candidates

@@ -252,6 +252,31 @@ OBS, so changing the image size or reflection settings never means re-fetching.
 If a proposed image is wrong, you can just **delete the file** in `library/` — the
 tool notices it's gone and treats that song as needing art again.
 
+Images you **confirmed or uploaded are never overwritten**. If you later pick a
+different image for one of those songs, the new one is saved beside it as
+`Artist - Title (2).png` and the old file stays where it is.
+
+Your review decisions live in `library/manifest.json`. Each time it is saved,
+the previous version is kept as `manifest.json.bak`. If `manifest.json` is ever
+damaged or goes missing, the app puts the backup back on its own and shows a
+banner saying so. If there is no usable backup either, it won't touch your
+library at all rather than start it over, and the banner explains what's wrong.
+
+**Sharper covers for older libraries.** Earlier versions saved iTunes covers at
+600×600, a little smaller than the image written for OBS. New ones are saved at
+1000×1000. To re-fetch the covers you already have at that size, without
+re-reviewing anything, close the dashboard and run:
+
+```
+python -m tools.upgrade_art           # shows what it would do, changes nothing
+python -m tools.upgrade_art --apply   # does it
+```
+
+It only replaces a cover when the larger download is the same picture. Your
+originals are copied to `library/pre-upgrade/` first, so you can put them back;
+delete that folder once you're happy. Expect roughly 1 MB more disk space per
+cover.
+
 ## 8. Staying up to date
 
 When the dashboard starts it asks GitHub whether there is a newer release. If
@@ -279,7 +304,8 @@ yourself, and use **Check now** on that same page any time.
 | `run_dashboard.bat` | Start the dashboard (also run this during streams). |
 | `config.example.json` | Template copied to `config.json` on first run. |
 | `app/` | The application code. |
-| `tools/probe_api.py` | Diagnostic: checks which StreamerSonglist API is answering and whether your token works. |
+| `tools/probe_api.py` | Diagnostic: checks that StreamerSonglist is answering and whether your token works. |
+| `tools/upgrade_art.py` | Re-fetches the iTunes covers already in your library at the current, larger size (see section 7). |
 | `tools/release.py` | For maintainers: bumps the version, commits and tags a release. |
 
 `config.json` (which holds your API token), your `library/`, and logs are **not**
@@ -300,9 +326,17 @@ committed to git — they're yours and local.
   the username. Check it, or use a **User** token instead.
 - **"StreamerSonglist has upgraded its API and now requires a token"** — exactly
   what it says: create a token (step 3) and paste it into Settings.
-- **Which API am I talking to?** — run `python -m tools.probe_api` for a quick
-  read-out of the API host, the detected version, your channel and queue. It
-  never prints your token.
+- **"StreamerSonglist has no Twitch channel called …"** — the username doesn't
+  match a StreamerSonglist channel on that platform. Check the spelling and the
+  **Platform** setting, or paste your songlist's URL from your browser instead.
+- **"Your artwork library can't be read"** — `library/manifest.json` is damaged
+  and there's no usable backup, so the app is leaving your library alone. If you
+  edited that file by hand, the banner says which line to fix; otherwise put
+  back a copy from your own backups. The dashboard notices the fix without a
+  restart.
+- **Is StreamerSonglist answering?** — run `python -m tools.probe_api` for a
+  quick read-out of the API host, your channel and your queue. It never prints
+  your token.
 - **No artwork for a song** — use **Reject → next** to try other sources, or
   **Upload** your own image.
 - **Last.fm is skipped** — that's expected unless you add your own free API key in

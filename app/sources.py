@@ -6,8 +6,9 @@ Sources, in the order the cascade tries them:
   2. Last.fm            (only if the user supplies their own API key in config)
   3. MusicBrainz + Cover Art Archive (no key; ranked at release-GROUP level)
 
-Every returned result is validated: fuzzy artist-similarity check (drop clear
-mismatches) and a compilation blocklist (deprioritise, don't hard-reject).
+Every result is checked and ranked by ``rank_candidates``: clear artist
+mismatches are dropped, and the rest are ordered so the right song on its
+original album comes first (see there). Nothing else is rejected outright.
 
 Each source returns a list of "candidate" dicts:
     {
@@ -17,11 +18,15 @@ Each source returns a list of "candidate" dicts:
       "album":   "<collection/album name>",
       "source":  "itunes" | "lastfm" | "musicbrainz",
       "similarity": <float 0..1 vs requested artist>,
-      "blocklisted": <bool>,
+      "blocklisted": <bool — looks like a compilation>,
+      # iTunes only:
+      "release_date": "<YYYY-MM-DD>",
+      "collection_artist": "<album artist, e.g. Various Artists>" | None,
     }
 """
 
 import logging
+import re
 import time
 from difflib import SequenceMatcher
 
@@ -35,6 +40,18 @@ log = logging.getLogger("artwork_fetcher")
 # Artist similarity threshold — below this we treat the result as a wrong artist.
 SIMILARITY_THRESHOLD = 0.6
 
+# Title similarity below which a result counts as a different song. Titles are
+# written loosely on both sides ("Franklins Tower" / "Franklin's Tower", "West
+# LA fadeaway" / "West L.A. Fadeaway" both score ~0.97), so this only has to
+# separate a song from the artist's other songs.
+TITLE_THRESHOLD = 0.8
+
+# iTunes results per search. The original album is often not in iTunes' first
+# five: against 144 confirmed choices (see rank_candidates), 10 found it most
+# often, and 25 added more noise than originals. Still one request per search,
+# so the rate limit is unaffected.
+ITUNES_RESULTS = 10
+
 # Album/collection names containing these are deprioritised (not rejected).
 BLOCKLIST_TERMS = [
     "greatest hits", "best of", "collection", "anthology", "essential",
@@ -46,8 +63,30 @@ BLOCKLIST_TERMS = [
 # always contains this hash — reject it outright.
 LASTFM_PLACEHOLDER_HASH = "2a96cbd8b46e442fc41c2b86b821562f"
 
-# iTunes artwork comes back as 100x100; string-replace to a larger size.
-ITUNES_ART_SIZE = "600x600bb.jpg"
+# iTunes artwork comes back as 100x100; Apple's image server renders whatever
+# size the URL's last segment asks for, up to the original (often 3000px). This
+# was 600 — smaller than the 640px image the app writes for OBS, so nearly
+# every cover in a library was an enlargement. 1000 covers that output with
+# room to spare and the art wall's largest tiles, without storing 3000px PNGs.
+ITUNES_ART_SIZE = "1000x1000bb.jpg"
+
+# Small enough for the review gallery's ~150px tiles, even at 2x.
+ITUNES_PREVIEW_SIZE = "300x300bb.jpg"
+
+# The size segment of an iTunes artwork URL: ".../source/100x100bb.jpg".
+_ITUNES_SIZE_RE = re.compile(r"/\d+x\d+[a-z]*\.(?:jpe?g|png|webp)$", re.IGNORECASE)
+
+
+def itunes_art_url(url: str, size: str = ITUNES_ART_SIZE) -> str:
+    """
+    The same iTunes artwork at another size. Anything that isn't an iTunes
+    artwork URL comes back unchanged, so this is safe on any candidate's URL —
+    including ones stored in the manifest back when the size was smaller.
+    """
+    if not url or "mzstatic.com" not in url:
+        return url
+    return _ITUNES_SIZE_RE.sub("/" + size, url)
+
 
 MUSICBRAINZ_API = "https://musicbrainz.org/ws/2"
 COVERART_API = "https://coverartarchive.org"
@@ -76,6 +115,33 @@ def artist_similarity(requested: str, found: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
+_BRACKET_CHARS_RE = re.compile(r"[()\[\]{}]")
+
+
+def title_similarity(requested: str, found: str) -> float:
+    """
+    Fuzzy 0..1 similarity of a returned track title to the requested one.
+
+    The requested title is cleaned the way the search term is (bracketed parts
+    and " - suffix" tails dropped). The found title is compared both without
+    and with its bracketed words, so "Feelin' Groovy" matches "The 59th Street
+    Bridge Song (Feelin' Groovy)" and "Hurt" matches "Hurt (Quiet)".
+    """
+    wanted = normalize_text(clean_title_for_search(requested))
+    if not wanted:
+        return 1.0  # nothing to compare against — accept
+    if not found:
+        return 0.0
+    short = normalize_text(found)
+    if wanted == short:
+        return 1.0
+    full = normalize_text(_BRACKET_CHARS_RE.sub(" ", found))
+    if f" {wanted} " in f" {full} ":
+        return 1.0
+    return max(SequenceMatcher(None, wanted, short).ratio(),
+               SequenceMatcher(None, wanted, full).ratio())
+
+
 def is_blocklisted(album: str) -> bool:
     """True if the album/collection name looks like a compilation/live/etc."""
     if not album:
@@ -84,21 +150,55 @@ def is_blocklisted(album: str) -> bool:
     return any(term in low for term in BLOCKLIST_TERMS)
 
 
-def rank_candidates(candidates: list, requested_artist: str) -> list:
+def _is_single(album: str) -> bool:
+    low = (album or "").lower()
+    return low.endswith(" - single") or low.endswith(" - ep")
+
+
+def rank_candidates(candidates: list, requested_artist: str,
+                    requested_title: str = "") -> list:
     """
-    Drop candidates whose artist clearly doesn't match, then sort clean-titled
-    (non-blocklisted) results ahead of blocklisted ones, higher artist
-    similarity first. Stable within equal keys.
+    Drop candidates whose artist clearly doesn't match, then order the rest,
+    most important first:
+
+      1. the right song. Nothing used to check this: the artist was the only
+         test, so another song by the same artist could win — on stream, too,
+         since the live search shows its first pick straight away;
+      2. not a compilation: a blocklisted album name, or — iTunes only — an
+         album credited to someone else ("Various Artists" on soundtracks and
+         tributes), which names alone never caught;
+      3. an album rather than a " - Single" or " - EP";
+      4. an exact artist match before a near miss;
+      5. the earliest release, so the original album beats the anniversary
+         reissue, the live archive and the DJ mix — the rule the MusicBrainz
+         ranking already followed. Sources with no dates keep their own order.
+
+    Measured 2026-09-25 against one library's 144 confirmed iTunes choices,
+    replayed from saved search results: this put the chosen album first for
+    121 songs, where artist-plus-blocklist managed 107. It fixed 17 and lost 3,
+    two of those to taste (a soundtrack cover and a single's cover chosen over
+    the album). Stable within equal keys.
     """
     kept = []
     for c in candidates:
         sim = artist_similarity(requested_artist, c.get("artist", ""))
         c["similarity"] = sim
-        c["blocklisted"] = is_blocklisted(c.get("album", ""))
+        album_artist = c.get("collection_artist")
+        c["blocklisted"] = is_blocklisted(c.get("album", "")) or bool(
+            album_artist
+            and artist_similarity(requested_artist, album_artist) < SIMILARITY_THRESHOLD
+        )
         if sim >= SIMILARITY_THRESHOLD:
             kept.append(c)
 
-    kept.sort(key=lambda c: (c["blocklisted"], -c["similarity"]))
+    kept.sort(key=lambda c: (
+        title_similarity(requested_title, c.get("title", "")) < TITLE_THRESHOLD,
+        c["blocklisted"],
+        _is_single(c.get("album", "")),
+        c["similarity"] < 1.0,
+        c.get("release_date") or "9999",
+        -c["similarity"],
+    ))
     return kept
 
 
@@ -107,7 +207,7 @@ def rank_candidates(candidates: list, requested_artist: str) -> list:
 # ---------------------------------------------------------------------------
 
 def search_itunes(artist: str, title: str, country: str = "GB",
-                  limit: int = 5) -> list:
+                  limit: int = ITUNES_RESULTS) -> list:
     """Search the iTunes Search API and return ranked candidates."""
     term = f"{artist} {clean_title_for_search(title)}".strip()
     log.info("iTunes search: %r (country=%s)", term, country)
@@ -125,22 +225,27 @@ def search_itunes(artist: str, title: str, country: str = "GB",
         log.error("iTunes search error: %s", e)
         return []
 
+    return rank_candidates(itunes_candidates(data.get("results", [])),
+                           artist, title)
+
+
+def itunes_candidates(results: list) -> list:
+    """Candidate dicts from raw iTunes search results, unranked."""
     candidates = []
-    for res in data.get("results", []):
+    for res in results:
         art = res.get("artworkUrl100") or ""
         if not art:
             continue
-        # Upscale by string-replacing the size segment (verified working).
-        url = art.replace("100x100bb.jpg", ITUNES_ART_SIZE)
         candidates.append({
-            "url": url,
+            "url": itunes_art_url(art),
             "artist": res.get("artistName", ""),
             "title": res.get("trackName", ""),
             "album": res.get("collectionName", ""),
             "source": "itunes",
+            "release_date": (res.get("releaseDate") or "")[:10],
+            "collection_artist": res.get("collectionArtistName"),
         })
-
-    return rank_candidates(candidates, artist)
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +317,7 @@ def search_lastfm(artist: str, title: str, api_key: str) -> list:
     except (requests.RequestException, ValueError) as e:
         log.error("Last.fm album.search error: %s", e)
 
-    return rank_candidates(candidates, artist)
+    return rank_candidates(candidates, artist, title)
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +448,7 @@ def search_musicbrainz(artist: str, title: str, max_groups: int = 6) -> list:
             "source": "musicbrainz",
         })
 
-    return rank_candidates(candidates, artist)
+    return rank_candidates(candidates, artist, title)
 
 
 # ---------------------------------------------------------------------------

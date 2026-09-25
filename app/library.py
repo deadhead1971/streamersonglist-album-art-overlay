@@ -9,11 +9,14 @@ Artwork library: the source of truth.
   line up, so both sides must call ``normalize_key`` and nothing else.
 
 The manifest tolerates a manually deleted image file: an entry whose ``file`` is
-gone is treated as needing art again (``has_image`` returns False).
+gone is treated as needing art again (``has_image`` returns False). It does
+NOT tolerate an unreadable manifest by treating it as empty — see "Manifest
+persistence" below.
 """
 
 import hashlib
 import json
+import logging
 import random
 import re
 import threading
@@ -22,7 +25,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from . import config, imaging
+from . import config, fileio, imaging
+
+log = logging.getLogger("artwork_fetcher")
 
 # Status values used in manifest entries.
 STATUS_PROPOSED = "proposed"        # auto-fetched, awaiting review
@@ -119,12 +124,25 @@ def perceptual_hash(path: Path) -> Optional[int]:
     try:
         from PIL import Image
         with Image.open(path) as im:
-            small = im.convert("L").resize(
-                (_PHASH_SIDE + 1, _PHASH_SIDE), Image.Resampling.LANCZOS
-            )
-            pixels = list(small.getdata())
+            bits = dhash(im)
     except (OSError, ValueError):
         return None
+
+    with _HASH_LOCK:
+        _PHASH_MEMO[key] = (stamp[0], stamp[1], bits)
+    return bits
+
+
+def dhash(image) -> int:
+    """
+    Difference hash of an open PIL image (see perceptual_hash). Two images are
+    the same cover when their hashes differ in only a few of the 64 bits.
+    """
+    from PIL import Image
+    small = image.convert("L").resize(
+        (_PHASH_SIDE + 1, _PHASH_SIDE), Image.Resampling.LANCZOS
+    )
+    pixels = list(small.getdata())
 
     bits = 0
     for row in range(_PHASH_SIDE):
@@ -132,9 +150,6 @@ def perceptual_hash(path: Path) -> Optional[int]:
         for col in range(_PHASH_SIDE):
             brighter = pixels[offset + col] > pixels[offset + col + 1]
             bits = (bits << 1) | (1 if brighter else 0)
-
-    with _HASH_LOCK:
-        _PHASH_MEMO[key] = (stamp[0], stamp[1], bits)
     return bits
 
 
@@ -266,6 +281,153 @@ def image_filename(title: str, artist: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Manifest persistence
+# ---------------------------------------------------------------------------
+#
+# The manifest is the one file in the library that cannot be rebuilt: it holds
+# every review decision. It used to be rewritten in place, and to load as an
+# empty library whenever it failed to parse — a torn write, or a hand edit with
+# a stray comma — without a log line. The next save then overwrote the
+# original, and the next sync or live song re-downloaded artwork on top of the
+# image files already on disk, uploads included. So now:
+#   * every save is atomic, and first copies the version it is replacing to
+#     manifest.json.bak (only ever a version that parses);
+#   * an unreadable or missing manifest is replaced by that backup, with the
+#     unreadable copy kept beside it;
+#   * with no usable backup, loading raises ManifestUnreadable, so nothing
+#     that writes to the library can run until the file is fixed.
+
+class ManifestUnreadable(RuntimeError):
+    """The manifest exists but cannot be used, and there is no backup to use."""
+
+
+# What went wrong with the manifest, for the dashboard banner. An error clears
+# on the next clean load; a restore notice stays until the dashboard restarts,
+# because it happened once and the user needs to hear about it once. This is
+# also what keeps a failure to one log line: Library() is built per request and
+# the overlays poll every few seconds, so logging per load would flood the log.
+_PROBLEM_LOCK = threading.Lock()
+_problem = {"error": None, "notice": None}
+
+
+def manifest_problem() -> Optional[dict]:
+    """``{"level": "error"|"warning", "message": ...}`` for the banner, or None."""
+    with _PROBLEM_LOCK:
+        if _problem["error"]:
+            return {"level": "error", "message": _problem["error"]}
+        if _problem["notice"]:
+            return {"level": "warning", "message": _problem["notice"]}
+        return None
+
+
+def _set_problem(kind: str, message: Optional[str]) -> None:
+    with _PROBLEM_LOCK:
+        changed = message is not None and _problem[kind] != message
+        _problem[kind] = message
+    if changed:
+        (log.error if kind == "error" else log.warning)("%s", message)
+
+
+def backup_path(manifest_path: Path) -> Path:
+    return manifest_path.with_name(manifest_path.name + ".bak")
+
+
+def _display(path: Path) -> str:
+    return f"{path.parent.name}/{path.name}"
+
+
+def _parse_manifest(raw: bytes) -> dict:
+    """Manifest bytes as a dict. ValueError if they are not a manifest."""
+    # Parsed from bytes rather than text: json detects the encoding itself and
+    # skips the UTF-8 byte-order mark some Windows editors add on save, which
+    # decoding as plain UTF-8 turned into a parse failure.
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError(f"expected a JSON object, found {type(data).__name__}")
+    return data
+
+
+def _unreadable(path: Path, reason: str) -> ManifestUnreadable:
+    message = (
+        f"Your artwork library's index ({_display(path)}) can't be read: "
+        f"{reason}. Nothing has been changed, and nothing will be saved to the "
+        f"library until it is fixed. Repair the file, or put a backup copy in "
+        f"its place; the dashboard picks it up without a restart."
+    )
+    _set_problem("error", message)
+    return ManifestUnreadable(message)
+
+
+def _load_manifest_file(path: Path) -> dict:
+    """
+    The manifest at ``path``: {} when there has never been one (first run), the
+    backup when it is unreadable or missing, else ManifestUnreadable. Call with
+    MANIFEST_LOCK held.
+    """
+    if path.exists():
+        try:
+            raw = fileio.read_bytes(path)
+        except OSError as e:
+            # Not a verdict on the contents — the file may be fine — so it is
+            # neither replaced nor mistaken for an empty library.
+            raise _unreadable(path, f"it could not be opened ({e})") from e
+        try:
+            data = _parse_manifest(raw)
+        except ValueError as e:
+            data = _restore_backup(path, raw, f"it isn't a valid manifest ({e})")
+    elif backup_path(path).exists():
+        # A manifest does not vanish on its own, so this is far more likely an
+        # accident than a deliberate fresh start. Starting over would quietly
+        # lose every review decision; bringing the backup back loses nothing,
+        # and anyone who really wants a clean slate deletes both.
+        data = _restore_backup(path, None, "it was missing")
+    else:
+        data = {}
+    _set_problem("error", None)
+    return data
+
+
+def _restore_backup(path: Path, raw: Optional[bytes], reason: str) -> dict:
+    """Put manifest.json.bak in place of an unreadable or missing manifest."""
+    backup = backup_path(path)
+    try:
+        backup_raw = fileio.read_bytes(backup)
+        data = _parse_manifest(backup_raw)
+    except (OSError, ValueError) as e:
+        if raw is None:
+            # No manifest, and a backup that is no use either: nothing is left
+            # to protect, so this is a fresh start after all.
+            log.warning("%s is missing and %s can't be read (%s) — starting "
+                        "an empty library", _display(path), backup.name, e)
+            return {}
+        if isinstance(e, FileNotFoundError):
+            raise _unreadable(path, f"{reason}, and there is no backup to "
+                                    f"restore") from e
+        raise _unreadable(path, f"{reason}, and the backup {backup.name} "
+                                f"can't be used either ({e})") from e
+
+    kept = ""
+    try:
+        if raw is not None:
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            keep = path.with_name(f"{path.stem}.unreadable-{stamp}{path.suffix}")
+            fileio.write_atomic(keep, raw)
+            kept = f" The unreadable version was kept as {keep.name}."
+        fileio.write_atomic(path, backup_raw)
+    except OSError as e:
+        raise _unreadable(path, f"{reason}, and putting the backup back "
+                                f"failed ({e})") from e
+
+    _set_problem("notice", (
+        f"Your artwork library's index ({_display(path)}) couldn't be read "
+        f"because {reason}, so its previous version ({backup.name}) was put "
+        f"back in its place. Your most recent change to the library may need "
+        f"redoing.{kept}"
+    ))
+    return data
+
+
+# ---------------------------------------------------------------------------
 # Library object
 # ---------------------------------------------------------------------------
 
@@ -287,22 +449,35 @@ class Library:
     # -- manifest persistence ------------------------------------------------
 
     def _load_manifest(self) -> dict:
+        """Raises ManifestUnreadable rather than ever returning a false {}."""
         with MANIFEST_LOCK:
-            if not self.manifest_path.exists():
-                return {}
-            try:
-                data = json.loads(self.manifest_path.read_text(encoding="utf-8"))
-                return data if isinstance(data, dict) else {}
-            except (json.JSONDecodeError, OSError):
-                return {}
+            return _load_manifest_file(self.manifest_path)
 
     def save(self) -> None:
         with MANIFEST_LOCK:
+            data = json.dumps(self._manifest, indent=2, ensure_ascii=False)
             self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-            self.manifest_path.write_text(
-                json.dumps(self._manifest, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            self._keep_backup()
+            fileio.write_atomic(self.manifest_path, data.encode("utf-8"))
+
+    def _keep_backup(self) -> None:
+        """
+        Copy the manifest that is about to be replaced to manifest.json.bak.
+        Only a version that parses is copied, so a damaged file can never
+        displace the last good backup.
+        """
+        try:
+            raw = fileio.read_bytes(self.manifest_path)
+            _parse_manifest(raw)
+        except (OSError, ValueError):
+            return  # nothing usable to keep — including before the first save
+        try:
+            fileio.write_atomic(backup_path(self.manifest_path), raw)
+        except OSError as e:
+            # The previous backup is still intact; failing the user's save
+            # over its safety net would be the wrong way round.
+            log.warning("Could not update %s (%s) — the previous backup "
+                        "is kept", backup_path(self.manifest_path).name, e)
 
     # -- entry access --------------------------------------------------------
 
@@ -464,12 +639,46 @@ class Library:
                 return path
         return None
 
-    def save_image_bytes(self, title: str, artist: str, data: bytes) -> str:
+    def save_image_bytes(self, entry: dict, data: bytes) -> str:
         """
-        Write raw image bytes to the library at source resolution under the
-        human-readable filename and return the filename. Callers set the manifest
-        ``file`` field to this and save the manifest.
+        Write an image for ``entry`` at source resolution and return its
+        filename. Callers set the entry's ``file`` to it and save the manifest.
+
+        An image the user chose is never overwritten. When a confirmed or
+        uploaded image is being replaced, its file stays and the new one is
+        saved beside it as ``Artist - Title (2).png``. The same goes for any
+        file this entry doesn't own: another song whose name sanitises to the
+        same filename, or an image left on disk by a manifest that was lost.
+        That last case is how a sync after a lost manifest used to re-download
+        artwork over every upload.
+
+        Only this entry's own machine-picked art (proposed, unverified) is
+        replaced in place, so cycling through candidates leaves no trail of
+        files behind it.
         """
-        fname = image_filename(title, artist)
-        (self.dir / fname).write_bytes(data)
+        fname = self._own_disposable_file(entry) or self._free_filename(entry)
+        fileio.write_atomic(self.dir / fname, data)
         return fname
+
+    def _own_disposable_file(self, entry: dict) -> Optional[str]:
+        """The entry's current file, if it may be overwritten — else None."""
+        current = entry.get("file")
+        if not current:
+            return None
+        if entry.get("status") == STATUS_CONFIRMED or entry.get("source") == "manual":
+            return None
+        for other in self._manifest.values():
+            if other is not entry and isinstance(other, dict) \
+                    and other.get("file") == current:
+                return None
+        return current
+
+    def _free_filename(self, entry: dict) -> str:
+        """``Artist - Title.png``, or the first free ``(2)``, ``(3)``… after it."""
+        wanted = Path(image_filename(entry.get("title") or "",
+                                     entry.get("artist") or ""))
+        name, n = wanted.name, 2
+        while (self.dir / name).exists():
+            name = f"{wanted.stem} ({n}){wanted.suffix}"
+            n += 1
+        return name

@@ -85,7 +85,10 @@ function esc(s){ return (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;',
 
 async function loadRows() {
   const r = await fetch('{{ url_for("api_entries") }}?filter=songlist');
-  allRows = (await r.json()).entries;
+  const d = await r.json();
+  // An unreadable library must not look like a songlist with nothing in it.
+  if (!r.ok) statusEl.textContent = d.error || 'Could not load your songs.';
+  allRows = d.entries || [];
   render();
 }
 

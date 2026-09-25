@@ -12,7 +12,7 @@ import json
 import shutil
 from pathlib import Path
 
-from . import __version__
+from . import __version__, fileio
 
 # Repo root = parent of the app package directory.
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,10 +41,7 @@ USER_AGENT = (
 
 DEFAULT_CONFIG = {
     "streamersonglist_username": "",
-    # StreamerSonglist API. v1 (today's production) needs no credentials; the
-    # v2 rewrite requires auth on every read. The client detects which is live
-    # and only sends the token when one is set, so these can stay blank until
-    # SSL flips.
+    # StreamerSonglist API. Every read needs a token.
     #   api_base       blank = production; set to the staging host to test
     #   api_token      the SSL access token — NEVER commit this
     #   api_token_type which Authorization prefix the token needs. The two
@@ -258,8 +255,10 @@ def load_config() -> dict:
         return dict(DEFAULT_CONFIG)
 
     try:
-        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        # utf-8-sig: a byte-order mark (Windows editors and PowerShell add one)
+        # used to make this a parse failure, i.e. silently all-default settings.
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+    except (ValueError, OSError):
         return dict(DEFAULT_CONFIG)
 
     if not isinstance(data, dict):
@@ -269,7 +268,12 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> None:
-    """Write config.json (pretty-printed, stable key order for clean diffs)."""
-    CONFIG_PATH.write_text(
-        json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    """
+    Write config.json (pretty-printed, stable key order for clean diffs).
+
+    Atomic: every overlay poll reads this file, and a read landing mid-write
+    could see a truncated file and get all-default settings back — which a
+    save handler reading at that moment would then have written out.
+    """
+    data = json.dumps(cfg, indent=2, ensure_ascii=False)
+    fileio.write_atomic(CONFIG_PATH, data.encode("utf-8"))
