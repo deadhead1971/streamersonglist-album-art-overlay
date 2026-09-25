@@ -55,7 +55,8 @@ Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
 3. Run it. Windows may show **"Windows protected your PC"**. There's no Run
    button at first: click **More info**, then **Run anyway**.
 
-   <img src="docs/screenshots/smartscreen-warning.png" alt="Windows protected your PC: click More info, then Run anyway" width="400">
+   <img src="docs/screenshots/smartscreen-warning.png" alt="Windows protected your PC, with only a Don't run button: click More info" width="380">
+   <img src="docs/screenshots/smartscreen-run-anyway.png" alt="After More info: the Run anyway button" width="380">
 
    Why the warnings? The app isn't code-signed yet, so Windows doesn't know
    the publisher, and every new version starts out unknown to it. The source
