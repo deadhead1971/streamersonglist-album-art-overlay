@@ -93,7 +93,12 @@ Set-Content -Path $pth.FullName -Encoding ASCII -Value @($stdlib, ".", "Lib", "s
 
 # --------------------------------------------------------------------------
 Step "tkinter"
-foreach ($dll in @("_tkinter.pyd") + (Get-ChildItem "$BasePrefix\DLLs" -Filter "t*86t.dll" | ForEach-Object Name)) {
+# zlib1.dll: Tcl links against it from Python 3.12 on (3.10's didn't), and
+# without it _tkinter fails to load with "The specified module could not be
+# found" — which the self-check catches, as it did on the first 3.12 build.
+$tkDlls = @("_tkinter.pyd") + (Get-ChildItem "$BasePrefix\DLLs" -Filter "t*86t.dll" | ForEach-Object Name)
+if (Test-Path "$BasePrefix\DLLs\zlib1.dll") { $tkDlls += "zlib1.dll" }
+foreach ($dll in $tkDlls) {
     Copy-Item "$BasePrefix\DLLs\$dll" $PyDir
 }
 Copy-Item -Recurse "$BasePrefix\Lib\tkinter" "$PyDir\Lib\tkinter"
