@@ -67,8 +67,10 @@ function render() {
   rowsEl.innerHTML = '';
   for (const r of filtered) {
     const tr = document.createElement('tr');
-    const thumb = r.image_url
-      ? `<img class="thumb" src="${r.image_url}" alt="">`
+    // The small cached copy, not the full image, and only once a row nears the
+    // screen: the first visit then generates only the thumbnails it shows.
+    const thumb = r.thumb_url
+      ? `<img class="thumb" src="${r.thumb_url}" alt="" loading="lazy">`
       : `<div class="thumb empty"></div>`;
     const reviewUrl = '{{ url_for("review_page") }}?key=' + encodeURIComponent(r.key);
     tr.innerHTML = `<td>${thumb}</td><td>${esc(r.title)}</td><td>${esc(r.artist)}</td>

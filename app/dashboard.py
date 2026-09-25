@@ -24,8 +24,8 @@ from flask import (
 from PIL import Image
 
 from . import (
-    __version__, artwork, config, imaging, library, runtime, songlist, sources,
-    updates,
+    __version__, artwork, config, fileio, imaging, library, runtime, songlist,
+    sources, updates,
 )
 from .library import (
     Library, STATUS_PROPOSED, STATUS_UNVERIFIED,
@@ -242,6 +242,43 @@ propose_job = ProposeJob()
 # Serialisation helpers
 # ---------------------------------------------------------------------------
 
+# Thumbnail size for list views. The Songs table draws 66px squares; 256 is the
+# smallest size the thumbnail cache keeps, and covers them at 2x and more.
+LIST_THUMB_SIZE = 256
+
+
+def _thumb_url(lib: Library, key: str, entry: dict):
+    """
+    URL of a small cached copy of the entry's image, or None if it has none.
+
+    Versioned by the image file itself rather than by ``updated_at``: browsers
+    keep this URL for good (see serve_image), so it must change whenever the
+    picture does — including a file replaced by hand, which touches nothing in
+    the manifest.
+    """
+    try:
+        stat = lib.image_path(entry).stat()
+    except (OSError, AttributeError):  # no file, or it just went away
+        return None
+    return url_for("serve_image", key=key, s=LIST_THUMB_SIZE,
+                   v=f"{stat.st_mtime_ns:x}-{stat.st_size:x}")
+
+
+def _send_thumbnail(thumb: Path):
+    """
+    A cached thumbnail, kept by the browser for good: its URL changes whenever
+    the picture does (a content hash, or the file version from _thumb_url).
+
+    Read through fileio.read_bytes rather than send_file's own open: on
+    Windows, opening a file in the instant another request renames it into
+    the cache fails with "Permission denied", and read_bytes rides that out.
+    Thumbnails are small, so holding one in memory costs nothing.
+    """
+    resp = app.response_class(fileio.read_bytes(thumb), mimetype="image/webp")
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
 def entry_view(lib: Library, key: str, entry: dict) -> dict:
     """JSON-friendly view of a manifest entry for the UI."""
     candidates = entry.get("candidates", [])
@@ -284,6 +321,9 @@ def entry_view(lib: Library, key: str, entry: dict) -> dict:
         "sources_exhausted": all(s in searched for s in artwork.SOURCE_ORDER),
         "image_url": url_for("serve_image", key=key,
                              v=entry.get("updated_at", "")) if lib.has_image(entry) else None,
+        # For anything drawn small. The Songs table used to load image_url for
+        # every row: 222 MB of full-size PNGs for a 186-song list.
+        "thumb_url": _thumb_url(lib, key, entry),
     }
 
 
@@ -742,6 +782,21 @@ def serve_image():
     path = lib.image_path(entry)
     if not path or not path.exists():
         return "no image", 404
+
+    # ?s=<px>: a small WebP from the same content-hash cache as the art wall's
+    # tiles, so a cover already thumbnailed for the wall is reused here.
+    if request.args.get("s"):
+        try:
+            requested = int(request.args.get("s"))
+        except (TypeError, ValueError):
+            requested = LIST_THUMB_SIZE
+        digest = library.content_hash(path)
+        thumb = (imaging.ensure_thumbnail(path, digest,
+                                          imaging.snap_thumb_size(max(1, requested)))
+                 if digest else None)
+        if thumb is not None:
+            return _send_thumbnail(thumb)
+        # An image that can't be thumbnailed still shows, just at full size.
     return send_file(path, mimetype="image/png")
 
 
@@ -1275,9 +1330,7 @@ def overlay_wall_tile():
         if thumb is None:
             return "unreadable", 404
 
-    resp = send_file(thumb, mimetype="image/webp")
-    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-    return resp
+    return _send_thumbnail(thumb)
 
 
 @app.route("/overlay/wall/exclude", methods=["POST"])

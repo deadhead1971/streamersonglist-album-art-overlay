@@ -240,17 +240,27 @@ def ensure_thumbnail(src_path, digest: str, size: int) -> Optional[Path]:
         return None
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    # Several connections can ask for the same tile at once. Each writes its own
-    # temp file and renames it into place, so no reader ever sees a partial one
-    # and whoever loses the race simply discards their copy.
+    # Several connections can ask for the same thumbnail at once — the Songs
+    # page does whenever songs share a cover. Each writes its own temp file and
+    # renames it into place, so no reader ever sees a partial one.
+    #
+    # rename, not replace: a file already at ``dest`` is this same thumbnail
+    # (the name is the content hash), so there is never a reason to swap it.
+    # And on Windows swapping it breaks whoever is sending it at that moment:
+    # opening a file mid-replace fails with "Permission denied", which served
+    # a 500 for a shared cover. os.rename refuses an existing target on Windows
+    # instead of touching it; on POSIX it replaces, which readers don't notice.
     tmp = dest.with_name(f"{dest.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         tmp.write_bytes(data)
-        os.replace(tmp, dest)
+        os.rename(tmp, dest)
+    except FileExistsError:
+        pass  # another request got there first, with the identical file
     except OSError as e:
         log.info("Thumbnail cache write failed for %s: %s", dest.name, e)
+    finally:
         try:
-            tmp.unlink()
+            tmp.unlink()  # still there only if it was not renamed into place
         except OSError:
             pass
 
