@@ -61,7 +61,9 @@ Step "Third-party notices"
 
 # A throwaway data folder with a space and an accent in its name, like a real
 # user profile can have.
-$Scratch = Join-Path ([IO.Path]::GetTempPath()) ("AlbumArtOverlay build é " + [guid]::NewGuid())
+# (The accent is built from its code point: PowerShell 5.1 reads a script
+# without a BOM as ANSI, so a literal one would arrive mangled.)
+$Scratch = Join-Path ([IO.Path]::GetTempPath()) ("AlbumArtOverlay build " + [char]0x00E9 + " " + [guid]::NewGuid())
 
 Step "Self-check"
 # A windowed exe run without a console has no stdout; it writes the report

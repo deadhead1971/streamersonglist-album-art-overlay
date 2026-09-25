@@ -1,0 +1,74 @@
+# Builds the Windows installer with packaging/build.ps1.
+#
+#   Push a v* tag (python -m tools.release X.Y.Z, then push) -> a DRAFT release
+#   with the installer and SHA256SUMS.txt attached. Nothing is announced until
+#   a person publishes that draft: the update banner reads releases/latest,
+#   which ignores drafts, so no user hears of a version whose installer isn't
+#   there yet. Don't create releases by hand; one would collide with this draft.
+#
+#   Run it manually (Actions -> Windows build -> Run workflow) for a test build:
+#   the installer is attached to the run as an artifact and no release is made.
+name: Windows build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # create the draft release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          # 3.10 reaches end-of-life in October 2026.
+          python-version: "3.12"
+
+      - name: Tag matches __version__
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path app/__init__.py -Pattern '__version__\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} does not match __version__ $version. Use python -m tools.release, which bumps and tags together."
+          }
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Build
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging/build.ps1 -Python python
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: AlbumArtOverlay-windows
+          path: |
+            dist/AlbumArtOverlay-Setup-*.exe
+            dist/SHA256SUMS.txt
+
+      - name: Draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $files = @(Get-ChildItem dist/AlbumArtOverlay-Setup-*.exe | ForEach-Object FullName) + "dist/SHA256SUMS.txt"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            # A re-run for the same tag replaces the files on the existing draft.
+            gh release upload $tag @files --clobber
+          } else {
+            gh release create $tag @files --draft --title $tag --notes "Draft: write the release notes, install it over the previous version, check it on VirusTotal, then publish."
+          }
+          if ($LASTEXITCODE -ne 0) { throw "gh release failed" }
