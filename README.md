@@ -52,6 +52,9 @@ Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
    and download **`AlbumArtOverlay-Setup-x.y.z.exe`**.
 2. Your browser may say the file **isn't commonly downloaded**. Choose **Keep**
    (in Edge it's under the **…** menu next to the download).
+
+   <img src="docs/screenshots/edge-keep-download.png" alt="Edge: the file isn't commonly downloaded. Open the … menu and choose Keep" width="420">
+
 3. Run it. Windows may show **"Windows protected your PC"**. There's no Run
    button at first: click **More info**, then **Run anyway**.
 
