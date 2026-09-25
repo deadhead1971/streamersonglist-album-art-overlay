@@ -12,6 +12,11 @@
     <strong>Settings saved, but StreamerSonglist rejected the token.</strong>
     {{ request.args.get('token_error') }}
   </div>
+  {% elif request.args.get('username_error') %}
+  <div class="flash err">
+    <strong>Settings saved, but that channel wasn't found.</strong>
+    {{ request.args.get('username_error') }}
+  </div>
   {% elif request.args.get('token_warning') %}
   <div class="flash warn">{{ request.args.get('token_warning') }}</div>
   {% elif request.args.get('token_fixed') %}
@@ -83,8 +88,7 @@
         Stored locally in <code>config.json</code> and sent only to
         StreamerSonglist — never committed or shared.
         {% if not token_set %}
-        You don't need one until StreamerSonglist switches over — the app detects
-        which API is live and tells you when it's needed.{% endif %}
+        The app can't read your songlist or queue without one.{% endif %}
       </div>
       {% if token_set %}
       <label class="checkbox">

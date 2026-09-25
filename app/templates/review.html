@@ -76,7 +76,15 @@ async function load() {
     queue = [SINGLE_KEY];
   } else {
     const r = await fetch(`{{ url_for("api_entries") }}?filter=${FILTER}`);
-    queue = (await r.json()).entries.map(e => e.key);
+    const d = await r.json();
+    if (!r.ok) {
+      // Not "nothing to review": the list couldn't be read at all.
+      $('card').hidden = true;
+      $('empty').hidden = false;
+      $('empty').innerHTML = `<p>${esc(d.error || 'Could not load the review list.')}</p>`;
+      return;
+    }
+    queue = d.entries.map(e => e.key);
   }
   pos = 0;
   if (queue.length === 0) { $('card').hidden = true; showEmpty(); }
@@ -162,7 +170,7 @@ function paintGallery() {
     el.dataset.index = c.index;
     const cap = esc(c.source || '') + (c.album ? ' · ' + esc(c.album) : '');
     el.innerHTML =
-      `<div class="cand-img"><img src="${esc(c.url)}" loading="lazy"
+      `<div class="cand-img"><img src="${esc(c.preview || c.url)}" loading="lazy"
          onerror="this.closest('.cand').classList.add('broken')"></div>
        <span class="cand-cap" title="${cap}">${cap}</span>
        ${c.blocklisted ? '<span class="cand-tag">comp?</span>' : ''}

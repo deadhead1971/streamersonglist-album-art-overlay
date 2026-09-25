@@ -17,8 +17,8 @@ What drives the tick depends on what's available. On the v2 API an
 thread the moment the queue changes, so artwork follows a song change in
 roughly the time one REST call takes. The ``poll_interval`` timer stays as a
 reconciliation net (stretched to ``IDLE_INTERVAL`` while the socket is up), and
-takes over again untouched whenever the doorbell is unavailable, disabled, on
-v1, or simply dropped mid-stream. The socket is an accelerator; it is never
+takes over again untouched whenever the doorbell is unavailable, disabled, or
+simply dropped mid-stream. The socket is an accelerator; it is never
 load-bearing.
 
 In file mode a missing/unresolvable SSL username is not fatal: the queue
@@ -37,7 +37,7 @@ import time
 import requests
 
 from . import artwork, events, songlist
-from .library import Library
+from .library import Library, ManifestUnreadable
 
 log = logging.getLogger("artwork_fetcher")
 
@@ -187,7 +187,7 @@ class RuntimeService:
     def requests_active(self):
         """
         True/False from the last requests open/closed check, or None if one has
-        never succeeded (v1 backend, no username, or every attempt failed).
+        never succeeded (no username, or every attempt failed).
         None means "assume open" to callers — see dashboard._promo_item.
         """
         with self._lock:
@@ -317,11 +317,13 @@ class RuntimeService:
             return None
         try:
             streamer = songlist.resolve_streamer(username, cfg=cfg)
-        except (songlist.AuthRequired, songlist.Forbidden) as e:
-            # Cutover day: say what to do rather than logging a bare 401. A 403
-            # joins it because a Streamer token aimed at the wrong channel is a
-            # settings mistake, not the transient blip the generic branch below
-            # assumes — it needs the loud message and the actionable text.
+        except (songlist.AuthRequired, songlist.Forbidden,
+                songlist.StreamerNotFound) as e:
+            # Say what to do rather than logging a bare 401. A 403 joins it
+            # because a Streamer token aimed at the wrong channel is a settings
+            # mistake, not the transient blip the generic branch below assumes,
+            # and so does a username SSL doesn't know — each needs the loud
+            # message and the actionable text.
             self._set_error(str(e), ERROR_AUTH)
             with self._lock:
                 self._resolve_failed_at = time.monotonic()
@@ -346,21 +348,40 @@ class RuntimeService:
 
     def _start_events(self, cfg: dict, streamer_id):
         """
-        Realtime doorbell. v1 is excluded deliberately: the events service keys
-        on v2 streamer ids, and v1 hands out different ids for the same
-        channel, so subscribing would quietly follow someone else's queue.
+        Realtime doorbell.
 
-        Split out of _run because the id can now arrive late — a service that
+        Split out of _run because the id can arrive late — a service that
         started with a rejected token subscribes when the resolve finally
         works, instead of polling blind for the rest of the session.
         """
         if streamer_id is None or not cfg.get("websocket_events", True):
             return
+        self._events.start(streamer_id, cfg)
+
+    def _resolve_song(self, cfg: dict, song, fallback_shown: bool) -> bool:
+        """
+        Write the artwork for ``song``. Returns False when the library's
+        manifest can't be read (the library logs and banners that itself): a
+        lookup would then miss every song, and the live search would start
+        refilling the library from nothing, so the fallback image is shown
+        instead — once, not on every retry.
+        """
         try:
-            if songlist.detect_backend(cfg) == "v2":
-                self._events.start(streamer_id, cfg)
-        except requests.RequestException as e:
-            log.info("Realtime events not started (%s) — polling only", e)
+            # Fresh Library per resolve so this thread never holds a stale
+            # manifest across dashboard edits.
+            lib = Library()
+        except ManifestUnreadable:
+            if not fallback_shown:
+                artwork.apply_fallback(cfg)
+            return False
+        try:
+            artwork.resolve_artwork_for_song(cfg, lib, *song)
+        except OSError as e:
+            # A manifest or image write that stayed blocked (see fileio).
+            # Losing one live grab is better than the service dying mid-stream.
+            log.error("Artwork for '%s' by '%s' could not be saved: %s",
+                      song[0], song[1], e)
+        return True
 
     def _run(self, cfg: dict):
         file_mode = cfg.get("song_source", "streamersonglist") == "file"
@@ -402,6 +423,7 @@ class RuntimeService:
         first = True
         backoff = 0.0  # extra seconds added after a 429
         last_tick = 0.0
+        retrying = False  # the current song is waiting on an unreadable manifest
         while not self._stop.is_set():
             if not first:
                 # Connected: events drive the tick and this is just the net.
@@ -504,11 +526,16 @@ class RuntimeService:
                     else:
                         log.info("Queue empty — applying fallback")
                     artwork.apply_fallback(cfg)
+                    retrying = False
                 else:
-                    log.info("Current song changed — fetching artwork...")
-                    # Fresh Library per resolve so this thread never holds a
-                    # stale manifest across dashboard edits.
-                    artwork.resolve_artwork_for_song(cfg, Library(), *result)
+                    if not retrying:
+                        log.info("Current song changed — fetching artwork...")
+                    retrying = not self._resolve_song(cfg, result, retrying)
+                    if retrying:
+                        # Forget the song so the next tick tries again: a
+                        # repaired manifest then shows this song's art straight
+                        # away, not from the next song on.
+                        last = object()
 
         self._events.stop()
         with self._lock:

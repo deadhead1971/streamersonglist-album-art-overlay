@@ -1,8 +1,8 @@
 """
 Probe the StreamerSonglist API with the app's own client.
 
-Run this on the day production flips (or any time the overlay goes quiet) to
-see, in seconds, which API is answering and whether the credentials work:
+Run this any time the overlay goes quiet to see, in seconds, whether
+StreamerSonglist is answering and the credentials work:
 
     python -m tools.probe_api                  # use config.json as-is
     python -m tools.probe_api --username foo   # override the username
@@ -50,17 +50,6 @@ def main() -> int:
         return 2
 
     print()
-    try:
-        backend = songlist.detect_backend(cfg, username)
-        print(f"backend   : {backend}")
-    except songlist.AuthRequired as e:
-        print("backend   : v2 (auth required)")
-        print(f"\nFAIL: {e}")
-        return 1
-    except requests.RequestException as e:
-        print(f"\nFAIL: probe request failed: {e}")
-        return 1
-
     try:
         streamer = songlist.resolve_streamer(username, cfg=cfg)
         print(f"streamer  : id={streamer['id']} name={streamer['name']!r}")

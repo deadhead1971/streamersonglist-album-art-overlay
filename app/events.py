@@ -16,7 +16,7 @@ Why a doorbell and not a data feed:
   * ``queue_reorder`` is not published at all for queues over 1000 entries.
 
 Parsing payloads would therefore buy a second, drift-prone model of state that
-``songlist.fetch_queue`` already normalises across v1/v2 — and would still need
+``songlist.fetch_queue`` already normalises — and would still need
 the REST refetch for the cases above. Ringing a bell and refetching is both
 less code and strictly more correct: a missed, malformed, or null event costs
 one redundant fetch instead of a wrong overlay.

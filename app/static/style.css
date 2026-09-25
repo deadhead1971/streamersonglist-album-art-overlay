@@ -28,6 +28,10 @@ a { color: var(--accent); text-decoration: none; }
 main { max-width: 1000px; margin: 0 auto; padding: 24px; }
 .panel { background: var(--panel); border: 1px solid var(--line);
   border-radius: 14px; padding: 24px; }
+/* Breathing room between stacked panels. Only the overlay settings page has
+   more than one, and a sibling selector leaves every single-panel page
+   untouched rather than adding a trailing gap above the footer. */
+.panel + .panel { margin-top: 50px; }
 h1 { margin: 0 0 16px; font-size: 22px; }
 
 .row { display: flex; align-items: center; gap: 12px; }
@@ -70,6 +74,10 @@ input[type=text], input[type=number], input[type=search], input[type=password] {
 .form label input { margin-top: 5px; }
 .form label.checkbox { display: flex; align-items: center; gap: 8px; color: var(--text); }
 .form label.checkbox input { width: auto; margin: 0; }
+/* Settings a chosen layout has taken out of play. Dimmed rather than
+   disabled, so their values still post and the user's choices survive being
+   switched away from and back. */
+.fields-off { opacity: .45; pointer-events: none; }
 fieldset { border: 1px solid var(--line); border-radius: 10px; margin: 0 0 18px; padding: 6px 18px 16px; }
 legend { padding: 0 8px; color: var(--accent); font-size: 13px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
@@ -165,6 +173,11 @@ table.songs th { color: var(--muted); font-weight: 600; font-size: 13px; }
 .runtime-banner-icon { font-size: 18px; color: var(--err); }
 .runtime-banner .small { color: #f0c7c7; }
 .runtime-banner a { color: var(--text); }
+/* Amber variant: something happened that the user should know about, but
+   nothing is broken now (the library banner after a restore from backup). */
+.runtime-banner.warn { background: #332b12; border-color: var(--warn); }
+.runtime-banner.warn .runtime-banner-icon { color: var(--warn); }
+.runtime-banner.warn .small { color: #efe2bd; }
 
 /* Update banner. First child of <main>, so it inherits the same centred
    column as the panels and lines up with them. */
@@ -185,17 +198,100 @@ table.songs th { color: var(--muted); font-weight: 600; font-size: 13px; }
 
 /* Overlay settings page */
 .overlay-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+/* A grid item is min-width:auto by default, so a 1920px-wide preview frame
+   would widen its own column rather than be clipped and scaled by it — and the
+   scale, being the column's width over the source's, would come out as 1. */
+.overlay-layout > * { min-width: 0; }
 @media (max-width: 900px) { .overlay-layout { grid-template-columns: 1fr; } }
 .overlay-preview h2 { font-size: 16px; margin: 0 0 10px; }
-.overlay-preview iframe {
-  width: 100%; height: 560px; border: 1px solid var(--line); border-radius: 10px;
-  /* checkerboard so transparency is visible */
+/* Empty-queue hint under a preview heading. Shown only while the live service
+   reports an empty queue (base.html toggles the class), so it can never sit
+   above a preview that is already full of songs. */
+.preview-hint { display: none; margin: -4px 0 10px; }
+body.queue-empty .preview-hint { display: block; }
+/* A preview is only worth having if it is a true miniature of the browser
+   source. Every overlay setting is in absolute pixels, so a box that merely
+   looks about right renders a different picture: at 9 columns a 20px corner
+   radius is 21% of a 96px tile in a 900px-wide preview and 9.6% of the 208px
+   tile OBS draws at 1920x1080 — the same saved number, half as round on
+   stream. So the iframe is laid out at the real source size and the whole
+   thing is scaled down as one piece. Ratios survive, and what you judge here
+   is what goes out. The stage carries the frame, the corner and the
+   transparency checkerboard, because those belong to the preview rather than
+   to the source and must not shrink with it. */
+.preview-stage {
+  position: relative; overflow: hidden; width: 100%;
+  border: 1px solid var(--line); border-radius: 10px;
   background: repeating-conic-gradient(#2a2e37 0% 25%, #1c1f26 0% 50%) 0 0 / 24px 24px;
 }
-/* Stacked variant: the now-playing card never wraps its text, so its preview
-   needs the panel's full width to accommodate long titles. */
+.overlay-preview iframe {
+  display: block; border: 0;
+  transform-origin: top left;
+  transform: scale(var(--preview-scale, 1));
+}
 .overlay-layout-stacked { grid-template-columns: 1fr; }
-.overlay-layout-stacked .overlay-preview iframe { height: 280px; }
+
+/* The source size that scaling is against. Not an overlay setting — it changes
+   nothing OBS reads — so it lives beside the picture, not in the form. */
+.preview-size {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 10px; font-size: 13px; color: var(--muted);
+}
+.preview-size input { width: 82px; padding: 5px 8px; font-size: 13px; }
+
+/* The preview follows the form as it is edited, so it can be showing something
+   OBS is not. That is the one state worth interrupting for: a dashed frame to
+   say "draft", and a bar under it carrying its own Save button, because the
+   form's own button is often off-screen by the time you like what you see. */
+.overlay-preview.drafting .preview-stage {
+  border-color: var(--warn); border-style: dashed;
+}
+.preview-dirty {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-top: 10px; padding: 10px 14px; border-radius: 8px;
+  background: #332b12; color: var(--warn); font-size: 14px;
+}
+/* display: flex beats the hidden attribute's UA rule, so say it here. */
+.preview-dirty[hidden] { display: none; }
+.preview-dirty span { flex: 1; min-width: 220px; }
+.preview-dirty button { padding: 7px 18px; }
+
+/* Sub-nav: four overlays now share this page, so anchor links keep it
+   navigable without splitting it up. Sits directly under the sticky topbar. */
+.subnav {
+  position: sticky; top: 54px; z-index: 9;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 10px 0 12px; margin-bottom: 4px; background: var(--bg);
+}
+.subnav a {
+  padding: 6px 12px; border-radius: 8px; font-size: 14px;
+  color: var(--muted); background: var(--panel2);
+}
+.subnav a:hover { color: var(--text); }
+/* Both bars are sticky, so an anchored panel must clear them both. */
+.panel[id] { scroll-margin-top: 112px; }
+
+/* Hidden covers, shown only once something has been hidden. Thumbnails rather
+   than a count, because "how do I undo this" needs to be answerable by looking
+   at the thing you hid and clicking it. */
+.hidden-strip { display: flex; flex-wrap: wrap; gap: 8px; }
+.hidden-cover {
+  position: relative; width: 64px; height: 64px; padding: 0; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  background: var(--panel2);
+}
+.hidden-cover img { width: 100%; height: 100%; object-fit: cover; display: block;
+  filter: grayscale(1); opacity: .55; transition: filter .15s ease, opacity .15s ease; }
+.hidden-cover:hover img, .hidden-cover:focus-visible img { filter: none; opacity: 1; }
+.hidden-gone { display: grid; place-items: center; width: 100%; height: 100%;
+  font-size: 11px; color: var(--muted); }
+.hidden-restore {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 0;
+  font-size: 11px; font-weight: 600; color: #fff; background: rgba(0,0,0,.72);
+  opacity: 0; transition: opacity .15s ease;
+}
+.hidden-cover:hover .hidden-restore,
+.hidden-cover:focus-visible .hidden-restore { opacity: 1; }
 .form select, .form input[type=color] {
   background: var(--bg); border: 1px solid var(--line); color: var(--text);
   padding: 8px 10px; border-radius: 8px; width: 100%; margin-top: 5px;

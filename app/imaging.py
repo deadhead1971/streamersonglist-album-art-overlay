@@ -14,12 +14,16 @@ changing image_size/reflection never requires re-fetching.
 
 import logging
 import os
+import threading
 import time
 from io import BytesIO
+from pathlib import Path
+from typing import Optional
 
 import requests
 from PIL import Image
 
+from . import config
 from .config import USER_AGENT
 
 log = logging.getLogger("artwork_fetcher")
@@ -160,6 +164,189 @@ def render_output_from_bytes(data: bytes, config: dict) -> Image.Image:
     with Image.open(BytesIO(data)) as im:
         im.load()
         return render_output(im, config)
+
+
+# ---------------------------------------------------------------------------
+# Art wall thumbnails
+# ---------------------------------------------------------------------------
+
+# The wall's whole performance story. Pointing a browser source at 188
+# full-resolution covers decodes to ~282MB of bitmap while the machine is also
+# encoding video; at 512px, the 18 visible tiles plus a small preload buffer
+# come to ~23MB, and that figure stays flat however big the library grows.
+#
+# Three buckets, snapped server-side so the cache cannot sprawl. WebP rather
+# than PNG because album art has no alpha to preserve: ~60KB a tile against
+# ~400KB, putting a whole 128-tile cache under 8MB.
+THUMB_SIZES = (256, 512, 1024)
+
+
+def snap_thumb_size(requested: int) -> int:
+    """Round a requested tile width up to the nearest cached bucket."""
+    for size in THUMB_SIZES:
+        if requested <= size:
+            return size
+    return THUMB_SIZES[-1]
+
+
+def make_thumbnail(src_path, size: int) -> bytes:
+    """
+    Square WebP thumbnail of a library image, centre-cropped to fill.
+
+    Cropping rather than letterboxing: a handful of library images are not
+    square (1280x720 grabs, 918x1000 scans) and a gapless mosaic with one
+    letterboxed tile in it reads as a broken tile.
+    """
+    with Image.open(src_path) as im:
+        im.load()
+        img = im.convert("RGB")
+
+    width, height = img.size
+    side = min(width, height)
+    if (width, height) != (side, side):
+        left = (width - side) // 2
+        top = (height - side) // 2
+        img = img.crop((left, top, left + side, top + side))
+    if img.size != (size, size):
+        img = img.resize((size, size), Image.Resampling.LANCZOS)
+
+    buf = BytesIO()
+    img.save(buf, "WEBP", quality=82, method=4)
+    return buf.getvalue()
+
+
+def thumbnail_path(digest: str, size: int) -> Path:
+    return config.THUMBS_DIR / f"{digest}_{size}.webp"
+
+
+def ensure_thumbnail(src_path, digest: str, size: int) -> Optional[Path]:
+    """
+    Path to the cached thumbnail for this image, generating it on first ask.
+    None if the source image cannot be read.
+
+    Generation is lazy by design: the first load of a wall assembles over a few
+    seconds as tiles finish, which is the intended reveal rather than a stall.
+    Browsers cap themselves at roughly six connections per host, so the burst
+    self-throttles and needs no queue here.
+    """
+    dest = thumbnail_path(digest, size)
+    if dest.exists():
+        return dest
+
+    try:
+        data = make_thumbnail(src_path, size)
+    except (OSError, ValueError) as e:
+        log.info("Thumbnail failed for %s: %s", src_path, e)
+        return None
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # Several connections can ask for the same thumbnail at once — the Songs
+    # page does whenever songs share a cover. Each writes its own temp file and
+    # renames it into place, so no reader ever sees a partial one.
+    #
+    # rename, not replace: a file already at ``dest`` is this same thumbnail
+    # (the name is the content hash), so there is never a reason to swap it.
+    # And on Windows swapping it breaks whoever is sending it at that moment:
+    # opening a file mid-replace fails with "Permission denied", which served
+    # a 500 for a shared cover. os.rename refuses an existing target on Windows
+    # instead of touching it; on POSIX it replaces, which readers don't notice.
+    tmp = dest.with_name(f"{dest.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_bytes(data)
+        os.rename(tmp, dest)
+    except FileExistsError:
+        pass  # another request got there first, with the identical file
+    except OSError as e:
+        log.info("Thumbnail cache write failed for %s: %s", dest.name, e)
+    finally:
+        try:
+            tmp.unlink()  # still there only if it was not renamed into place
+        except OSError:
+            pass
+
+    return dest if dest.exists() else None
+
+
+# ---------------------------------------------------------------------------
+# Colour profiling — sort keys for the art wall
+# ---------------------------------------------------------------------------
+
+# A cover's average colour is useless for sorting: mix a whole sleeve together
+# and almost everything lands on the same muddy brown. What reads as "the
+# colour of that record" is its most *insistent* hue, so hue is taken from a
+# histogram where each pixel votes with its saturation, damped at both ends of
+# the lightness range — near-black and near-white pixels carry no usable hue and
+# would otherwise swamp a dark sleeve with meaningless noise.
+_COLOUR_MEMO = {}        # path str -> (mtime_ns, size, profile)
+_COLOUR_LOCK = threading.Lock()
+_COLOUR_BINS = 36
+_COLOUR_SAMPLE = 48
+
+# Below this weighted-chroma mass a cover has no hue worth sorting on — a
+# black-and-white portrait, a sepia scan. Measured across a real library
+# 2026-09-01 this put 17% of covers in the achromatic group, which matched
+# eyeballing them. They sort as their own band by lightness instead.
+CHROMA_FLOOR = 0.06
+
+
+def colour_profile(src_path, digest: str = None) -> dict:
+    """
+    ``{"hue": 0-359, "chroma": 0-1, "light": 0-1}`` for a library image.
+
+    Reads the cached 256px thumbnail when one exists — it is a tenth the pixels
+    of the source and already on disk after a wall has loaded once. Memoised
+    against the SOURCE file's stat either way, so replacing an image by hand
+    re-profiles it.
+    """
+    import colorsys
+
+    try:
+        stat = Path(src_path).stat()
+    except OSError:
+        return {"hue": 0, "chroma": 0.0, "light": 0.0}
+
+    key = str(src_path)
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    with _COLOUR_LOCK:
+        cached = _COLOUR_MEMO.get(key)
+        if cached is not None and cached[:2] == stamp:
+            return cached[2]
+
+    read_from = src_path
+    if digest:
+        thumb = thumbnail_path(digest, 256)
+        if thumb.exists():
+            read_from = thumb
+
+    try:
+        with Image.open(read_from) as im:
+            small = im.convert("RGB").resize(
+                (_COLOUR_SAMPLE, _COLOUR_SAMPLE), Image.Resampling.BILINEAR
+            )
+            pixels = list(small.getdata())
+    except (OSError, ValueError):
+        return {"hue": 0, "chroma": 0.0, "light": 0.0}
+
+    bins = [0.0] * _COLOUR_BINS
+    chroma_mass = 0.0
+    light_sum = 0.0
+    for r, g, b in pixels:
+        hue, light, sat = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+        light_sum += light
+        weight = sat * (1 - abs(2 * light - 1))
+        chroma_mass += weight
+        bins[int(hue * _COLOUR_BINS) % _COLOUR_BINS] += weight
+
+    peak = max(range(_COLOUR_BINS), key=lambda i: bins[i])
+    profile = {
+        "hue": int(peak * (360 / _COLOUR_BINS)),
+        "chroma": chroma_mass / len(pixels),
+        "light": light_sum / len(pixels),
+    }
+
+    with _COLOUR_LOCK:
+        _COLOUR_MEMO[key] = (stamp[0], stamp[1], profile)
+    return profile
 
 
 def to_png_bytes(data_or_img) -> bytes:

@@ -23,6 +23,7 @@
   "overlay": {
     "max_songs": 5,
     "include_current": true,
+    "direction": "column",
     "show_artwork": true,
     "show_title": true,
     "show_artist": true,
@@ -30,8 +31,10 @@
     "show_position": true,
     "show_promo": false,
     "preset": "dark",
+    "show_card": true,
     "font_size": 20,
     "art_size": 56,
+    "art_radius": 6,
     "row_gap": 10,
     "accent": "#4da3ff",
     "animation": "slide",
@@ -45,6 +48,23 @@
     "closed_text": "",
     "closed_subtext": "",
     "closed_image": ""
+  },
+  "wall": {
+    "columns": 6,
+    "gap": 0,
+    "radius": 0,
+    "source": "library",
+    "filter": "songlist",
+    "dedupe": true,
+    "exclude": [],
+    "order": "shuffle",
+    "sort_axis": "row",
+    "swap_interval": 4,
+    "swap_fade": 1200,
+    "drift": true,
+    "assemble": true,
+    "breathe": false,
+    "hero_interval": 0
   },
   "reflection": {
     "enabled": true,

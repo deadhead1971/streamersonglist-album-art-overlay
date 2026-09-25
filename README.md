@@ -192,6 +192,57 @@ that message blank. Use the **Preview the empty-queue card** dropdown under
 either preview to see both states without touching your live queue or your
 request settings.
 
+### The art wall
+
+Once you have a library, the dashboard can show it off. The **art wall** is a
+grid of your album covers that fills whatever OBS source you give it — a
+full-screen background, a starting-soon or intermission scene, or a panel
+beside your other overlays. It reads nothing from your queue, so it works
+offline and before you go live.
+
+Set it up on the **Overlay** page under *Art wall*. You choose the number of
+**columns**; the wall works out how many rows fit the source you gave it, so
+the same setting suits a wide scene and a tall one. Gap and corner radius are
+yours to set: leave both at 0 for a gapless mosaic that fills the screen like
+wallpaper, or raise them for a gallery of separate covers.
+
+The wall does not sit still. Every few seconds one cover cross-fades to another
+from your library, each tile drifts very slowly on its own cycle, and covers
+fade in one at a time in random places when the scene starts. All of it is
+adjustable, and setting the swap interval to 0 holds it still.
+
+**Arrangement.** Shuffled is the default, but the wall can also lay your covers
+out in order:
+
+- **Dark to light** — a brightness gradient across the grid. Works on any
+  library, and it is the one that looks most deliberate.
+- **By colour** — warm reds and oranges through to cool blues, with
+  black-and-white sleeves grouped in their own band. How well this reads
+  depends on your library: record sleeves cluster at the warm end, so expect a
+  warm-to-cool sweep rather than a full rainbow.
+- **By artist** — an artist's covers sit together.
+
+Choose whether the order **runs across in rows** or **down in columns** —
+horizontal or vertical bands. A sorted wall still opens on a different set of
+records every time the scene starts, and swaps only ever exchange a cover for
+another from the same part of the order, so a gradient keeps its shape however
+long you leave it running.
+
+A few things worth knowing:
+
+- **Confirmed, proposed and live-grabbed artwork all count**, so the wall looks
+  good before you have reviewed anything. If you have no artwork at all yet,
+  the browser source simply renders nothing — run *Sync songlist* and *Find
+  artwork* on the Songs page and it fills itself in.
+- **Each cover appears once.** Several songs usually share an album, and the
+  wall recognises the same cover even when it was downloaded twice.
+- **Click any cover in the preview to hide it** from the wall. Hidden covers
+  stay in your library; you can bring them all back from the same panel.
+- **Tick "Shutdown source when not visible"** on this browser source in OBS. It
+  stops the animation using CPU behind a scene you are not showing — and it
+  means the wall reshuffles and replays its reveal each time you cut back to
+  that scene, so it looks different every time.
+
 ## 7. Your artwork library
 
 Images live in the `library/` folder, named `Artist - Title.png`, at full
@@ -200,6 +251,31 @@ OBS, so changing the image size or reflection settings never means re-fetching.
 
 If a proposed image is wrong, you can just **delete the file** in `library/` — the
 tool notices it's gone and treats that song as needing art again.
+
+Images you **confirmed or uploaded are never overwritten**. If you later pick a
+different image for one of those songs, the new one is saved beside it as
+`Artist - Title (2).png` and the old file stays where it is.
+
+Your review decisions live in `library/manifest.json`. Each time it is saved,
+the previous version is kept as `manifest.json.bak`. If `manifest.json` is ever
+damaged or goes missing, the app puts the backup back on its own and shows a
+banner saying so. If there is no usable backup either, it won't touch your
+library at all rather than start it over, and the banner explains what's wrong.
+
+**Sharper covers for older libraries.** Earlier versions saved iTunes covers at
+600×600, a little smaller than the image written for OBS. New ones are saved at
+1000×1000. To re-fetch the covers you already have at that size, without
+re-reviewing anything, close the dashboard and run:
+
+```
+python -m tools.upgrade_art           # shows what it would do, changes nothing
+python -m tools.upgrade_art --apply   # does it
+```
+
+It only replaces a cover when the larger download is the same picture. Your
+originals are copied to `library/pre-upgrade/` first, so you can put them back;
+delete that folder once you're happy. Expect roughly 1 MB more disk space per
+cover.
 
 ## 8. Staying up to date
 
@@ -228,7 +304,8 @@ yourself, and use **Check now** on that same page any time.
 | `run_dashboard.bat` | Start the dashboard (also run this during streams). |
 | `config.example.json` | Template copied to `config.json` on first run. |
 | `app/` | The application code. |
-| `tools/probe_api.py` | Diagnostic: checks which StreamerSonglist API is answering and whether your token works. |
+| `tools/probe_api.py` | Diagnostic: checks that StreamerSonglist is answering and whether your token works. |
+| `tools/upgrade_art.py` | Re-fetches the iTunes covers already in your library at the current, larger size (see section 7). |
 | `tools/release.py` | For maintainers: bumps the version, commits and tags a release. |
 
 `config.json` (which holds your API token), your `library/`, and logs are **not**
@@ -249,9 +326,17 @@ committed to git — they're yours and local.
   the username. Check it, or use a **User** token instead.
 - **"StreamerSonglist has upgraded its API and now requires a token"** — exactly
   what it says: create a token (step 3) and paste it into Settings.
-- **Which API am I talking to?** — run `python -m tools.probe_api` for a quick
-  read-out of the API host, the detected version, your channel and queue. It
-  never prints your token.
+- **"StreamerSonglist has no Twitch channel called …"** — the username doesn't
+  match a StreamerSonglist channel on that platform. Check the spelling and the
+  **Platform** setting, or paste your songlist's URL from your browser instead.
+- **"Your artwork library can't be read"** — `library/manifest.json` is damaged
+  and there's no usable backup, so the app is leaving your library alone. If you
+  edited that file by hand, the banner says which line to fix; otherwise put
+  back a copy from your own backups. The dashboard notices the fix without a
+  restart.
+- **Is StreamerSonglist answering?** — run `python -m tools.probe_api` for a
+  quick read-out of the API host, your channel and your queue. It never prints
+  your token.
 - **No artwork for a song** — use **Reject → next** to try other sources, or
   **Upload** your own image.
 - **Last.fm is skipped** — that's expected unless you add your own free API key in

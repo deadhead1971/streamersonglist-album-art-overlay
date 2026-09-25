@@ -2,7 +2,13 @@
 {% set active = 'overlay' %}
 {% block title %}Overlays{% endblock %}
 {% block content %}
-<div class="panel">
+<nav class="subnav">
+  <a href="#queue-overlay">Queue overlay</a>
+  <a href="#current-overlay">Now playing</a>
+  <a href="#promo">Empty-queue card</a>
+  <a href="#wall">Art wall</a>
+</nav>
+<div class="panel" id="queue-overlay">
   <h1>Queue overlay</h1>
   {% if request.args.get('saved') == '1' %}<div class="flash ok">Queue overlay settings saved.</div>{% endif %}
 
@@ -29,11 +35,13 @@
   </div>
 
   <div class="overlay-layout">
-    <form method="post" action="{{ url_for('save_overlay_settings') }}" class="form">
+    <form method="post" action="{{ url_for('save_overlay_settings') }}" class="form"
+          id="queue-form">
       <fieldset>
         <legend>Songs</legend>
         <label>Max songs shown
-          <input type="number" name="max_songs" value="{{ opts.max_songs }}" min="1" max="20"></label>
+          <input type="number" id="queue-max" name="max_songs"
+                 value="{{ opts.max_songs }}" min="1" max="20"></label>
         <label class="checkbox"><input type="checkbox" name="include_current"
                {{ 'checked' if opts.include_current }}>
           Include the current song (queue position 1)</label>
@@ -43,17 +51,38 @@
       </fieldset>
 
       <fieldset>
+        <legend>Layout</legend>
+        <label>Direction
+          <select name="direction" id="queue-direction">
+            <option value="column" {{ 'selected' if opts.direction != 'row' }}>
+              Vertical list</option>
+            <option value="row" {{ 'selected' if opts.direction == 'row' }}>
+              Horizontal strip (artwork only)</option>
+          </select></label>
+        <p class="muted" id="queue-width"></p>
+      </fieldset>
+
+      <fieldset>
         <legend>Fields</legend>
-        <label class="checkbox"><input type="checkbox" name="show_artwork"
-               {{ 'checked' if opts.show_artwork }}> Artwork</label>
-        <label class="checkbox"><input type="checkbox" name="show_position"
-               {{ 'checked' if opts.show_position }}> Position number</label>
-        <label class="checkbox"><input type="checkbox" name="show_title"
-               {{ 'checked' if opts.show_title }}> Song title</label>
-        <label class="checkbox"><input type="checkbox" name="show_artist"
-               {{ 'checked' if opts.show_artist }}> Artist</label>
-        <label class="checkbox"><input type="checkbox" name="show_requester"
-               {{ 'checked' if opts.show_requester }}> Requested by</label>
+        <div id="queue-fields">
+          <label class="checkbox"><input type="checkbox" name="show_artwork"
+                 {{ 'checked' if opts.show_artwork }}> Artwork</label>
+          <label class="checkbox"><input type="checkbox" name="show_position"
+                 {{ 'checked' if opts.show_position }}> Position number</label>
+          <label class="checkbox"><input type="checkbox" name="show_title"
+                 {{ 'checked' if opts.show_title }}> Song title</label>
+          <label class="checkbox"><input type="checkbox" name="show_artist"
+                 {{ 'checked' if opts.show_artist }}> Artist</label>
+          <label class="checkbox"><input type="checkbox" name="show_requester"
+                 {{ 'checked' if opts.show_requester }}> Requested by</label>
+        </div>
+        <p class="muted" id="queue-fields-note" hidden>A horizontal strip is
+          artwork only — there is no room beside a cover for a title, and the
+          position number would put the covers on an uneven pitch. Your
+          choices here are kept, and come back if you switch to a vertical
+          list.</p>
+        <p class="muted" id="queue-position-note" hidden>The position number
+          needs a text field to sit beside; with all three off it is hidden.</p>
         <label class="checkbox"><input type="checkbox" name="show_promo"
                {{ 'checked' if opts.show_promo }}>
           Show the <a href="#promo">empty-queue card</a> when there's nothing
@@ -63,17 +92,29 @@
       <fieldset>
         <legend>Style</legend>
         <label>Preset
-          <select name="preset">
+          <select name="preset" id="queue-preset">
             {% for p in presets %}
             <option value="{{ p }}" {{ 'selected' if opts.preset == p }}>{{ p }}</option>
             {% endfor %}
           </select></label>
+        <label class="checkbox"><input type="checkbox" name="show_card"
+               id="queue-card" {{ 'checked' if opts.show_card }}>
+          Draw a card behind each row</label>
+        <p class="muted">Untick to drop the background, padding and shadow and
+          let the artwork sit straight on the transparent source. The
+          empty-queue card keeps its box either way.</p>
+        <p class="muted" id="queue-preset-note" hidden>Switched to
+          <em>minimal</em> with the card off — <em>light</em> and <em>glass</em>
+          put a pale box round every cover, which rarely looks good with no
+          text in it. Change either back if you want the box.</p>
         <div class="grid">
           <label>Font size (px) <input type="number" name="font_size" value="{{ opts.font_size }}" min="8" max="72"></label>
-          <label>Art size (px) <input type="number" name="art_size" value="{{ opts.art_size }}" min="16" max="300"></label>
-          <label>Row gap (px) <input type="number" name="row_gap" value="{{ opts.row_gap }}" min="0" max="100"></label>
+          <label>Art size (px) <input type="number" id="queue-art" name="art_size" value="{{ opts.art_size }}" min="16" max="300"></label>
+          <label>Art corners (px) <input type="number" id="queue-radius" name="art_radius" value="{{ opts.art_radius }}" min="0" max="150"></label>
+          <label>Row gap (px) <input type="number" id="queue-gap" name="row_gap" value="{{ opts.row_gap }}" min="0" max="100"></label>
           <label>Accent colour <input type="color" name="accent" value="{{ opts.accent }}"></label>
         </div>
+        <p class="muted" id="queue-radius-note"></p>
         <div class="grid">
           <label>Animation
             <select name="animation">
@@ -99,8 +140,26 @@
 
     <div class="overlay-preview">
       <h2>Preview</h2>
-      <iframe id="preview" src="{{ url_for('overlay_queue_page') }}"
-              title="Overlay preview"></iframe>
+      <p class="muted preview-hint">Your queue is empty — add a few songs
+        on StreamerSonglist and they'll show up here.</p>
+      <div class="preview-stage">
+        <iframe id="preview" src="{{ url_for('overlay_queue_page') }}"
+                title="Overlay preview"></iframe>
+      </div>
+      <div class="preview-size">
+        <span>OBS source size</span>
+        <input type="number" id="queue-size-w" min="100" max="4096" step="10"
+               aria-label="Source width">
+        <span>×</span>
+        <input type="number" id="queue-size-h" min="100" max="4096" step="10"
+               aria-label="Source height">
+        <span id="queue-scale-note"></span>
+      </div>
+      <div class="preview-dirty" id="queue-dirty" hidden>
+        <span><strong>Preview only.</strong> These changes aren't saved yet —
+          OBS is still showing your saved settings.</span>
+        <button type="submit" form="queue-form" class="primary">Save</button>
+      </div>
       <label>Preview the empty-queue card
         <select class="promo-demo" data-frame="preview">
           <option value="">off</option>
@@ -151,7 +210,8 @@
   </div>
 
   <div class="overlay-layout overlay-layout-stacked">
-    <form method="post" action="{{ url_for('save_overlay_current_settings') }}" class="form">
+    <form method="post" action="{{ url_for('save_overlay_current_settings') }}" class="form"
+          id="current-form">
       <fieldset>
         <legend>Layout</legend>
         <label>Layout
@@ -221,8 +281,26 @@
 
     <div class="overlay-preview">
       <h2>Preview</h2>
-      <iframe id="current-preview" src="{{ url_for('overlay_current_page') }}"
-              title="Now-playing preview"></iframe>
+      <p class="muted preview-hint">Your queue is empty — add a few songs
+        on StreamerSonglist and they'll show up here.</p>
+      <div class="preview-stage">
+        <iframe id="current-preview" src="{{ url_for('overlay_current_page') }}"
+                title="Now-playing preview"></iframe>
+      </div>
+      <div class="preview-size">
+        <span>OBS source size</span>
+        <input type="number" id="current-size-w" min="100" max="4096" step="10"
+               aria-label="Source width">
+        <span>×</span>
+        <input type="number" id="current-size-h" min="100" max="4096" step="10"
+               aria-label="Source height">
+        <span id="current-scale-note"></span>
+      </div>
+      <div class="preview-dirty" id="current-dirty" hidden>
+        <span><strong>Preview only.</strong> These changes aren't saved yet —
+          OBS is still showing your saved settings.</span>
+        <button type="submit" form="current-form" class="primary">Save</button>
+      </div>
       <label>Preview the empty-queue card
         <select class="promo-demo" data-frame="current-preview">
           <option value="">off</option>
@@ -306,17 +384,560 @@
   </form>
 </div>
 
+<div class="panel" id="wall">
+  <h1>Art wall</h1>
+  {% if request.args.get('saved') == 'wall' %}<div class="flash ok">Art wall settings saved.</div>{% endif %}
+
+  {% if wall_pool == 0 %}
+  <div class="flash warn">
+    <strong>No artwork to show yet.</strong> The wall draws on your local
+    artwork library. Go to <a href="{{ url_for('songs_page') }}">Songs</a>,
+    run <em>Sync songlist</em> and then <em>Find artwork</em> — the wall will
+    fill itself in as covers arrive. Until then the browser source renders
+    nothing rather than an error, so it is safe to add to a scene now.
+  </div>
+  {% endif %}
+
+  <div class="flash welcome">
+    <strong>Add to OBS:</strong> create a <em>Browser</em> source, tick
+    <em>Local file</em>, and point it at the loader below. Size it to the area
+    you want filled — the wall fits itself to whatever you give it.
+    <strong>Tick <em>Shutdown source when not visible</em></strong> on this one:
+    it stops the animation using the CPU behind a scene you aren't showing, and
+    it means the wall reshuffles and replays its reveal every time you cut back
+    to that scene.
+    <div class="row" style="margin-top:.5em">
+      <input type="text" id="wall-loader" readonly value="{{ wall_loader }}"
+             style="flex:1" onclick="this.select()">
+      <button type="button" class="secondary copy-btn" data-copy="wall-loader">Copy path</button>
+    </div>
+    <div class="row" style="margin-top:.4em">
+      <input type="text" id="wall-url" readonly value="{{ wall_url }}"
+             style="flex:1" onclick="this.select()">
+      <button type="button" class="secondary copy-btn" data-copy="wall-url">Copy URL</button>
+    </div>
+  </div>
+
+  <div class="overlay-layout overlay-layout-stacked">
+    <div class="overlay-preview wall-preview">
+      <h2>Preview</h2>
+      <div class="preview-stage">
+        <iframe id="wall-preview" src="{{ url_for('overlay_wall_page', pick=1) }}"
+                title="Art wall preview"></iframe>
+      </div>
+      <div class="preview-size">
+        <span>OBS source size</span>
+        <input type="number" id="wall-size-w" min="100" max="4096" step="10"
+               aria-label="Source width">
+        <span>×</span>
+        <input type="number" id="wall-size-h" min="100" max="4096" step="10"
+               aria-label="Source height">
+        <span id="wall-scale-note"></span>
+      </div>
+      <div class="preview-dirty" id="wall-dirty" hidden>
+        <span><strong>Preview only.</strong> These changes aren't saved yet —
+          OBS is still showing your saved settings.</span>
+        <button type="submit" form="wall-form" class="primary">Save</button>
+      </div>
+      <p class="muted">Shown over a checkerboard — in OBS the background is
+        transparent. <strong>Click any cover to hide it from the wall.</strong>
+        That is saved straight away and applies to the real overlay, not just
+        this preview — but nothing is deleted, and every hidden cover comes
+        back with one click under <em>Which covers</em> below.</p>
+    </div>
+
+    <form method="post" action="{{ url_for('save_overlay_wall_settings') }}" class="form"
+          id="wall-form">
+      <fieldset>
+        <legend>Grid</legend>
+        <label>Columns
+          <input type="number" id="wall-cols" name="columns"
+                 value="{{ wall_opts.columns }}" min="2" max="12"></label>
+        <p class="muted" id="wall-headroom"></p>
+        <div class="grid">
+          <label>Gap between tiles (px)
+            <input type="number" name="gap" value="{{ wall_opts.gap }}" min="0" max="64"></label>
+          <label>Corner radius (px)
+            <input type="number" name="radius" value="{{ wall_opts.radius }}" min="0" max="64"></label>
+        </div>
+        <p class="muted">Gap 0 with radius 0 is a gapless mosaic — tiles touch,
+          filling the source like wallpaper. Raise both for a gallery of
+          separate covers.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Which covers</legend>
+        <label>Include
+          <select name="filter">
+            <option value="songlist" {{ 'selected' if wall_opts.filter == 'songlist' }}>
+              Only songs still in my songlist</option>
+            <option value="all" {{ 'selected' if wall_opts.filter == 'all' }}>
+              Everything in my artwork library</option>
+          </select></label>
+        <p class="muted">Confirmed, proposed and live-grabbed artwork all count —
+          you don't have to review your library before the wall looks good.</p>
+        <label class="checkbox"><input type="checkbox" name="dedupe"
+               {{ 'checked' if wall_opts.dedupe }}>
+          Show each cover only once (several songs often share one album)</label>
+        {% if wall_hidden %}
+        <div class="wall-hidden" id="wall-hidden">
+          <p class="muted" style="margin:.9em 0 .5em">
+            <strong>{{ wall_hidden | length }} cover{{ '' if wall_hidden | length == 1 else 's' }} hidden</strong>
+            from the wall. Click one to show it again — they were never removed
+            from your library.</p>
+          <div class="hidden-strip">
+            {% for h in wall_hidden %}
+            <button type="button" class="hidden-cover" data-hash="{{ h.hash }}"
+                    title="{{ h.name }}&#10;Click to show this cover again">
+              {% if h.known %}
+              <img src="{{ url_for('overlay_wall_tile', h=h.hash, s=256) }}" alt="{{ h.name }}">
+              {% else %}
+              <span class="hidden-gone">gone</span>
+              {% endif %}
+              <span class="hidden-restore">Show</span>
+            </button>
+            {% endfor %}
+          </div>
+          <button type="button" id="wall-show-all" class="secondary"
+                  style="margin-top:.7em">Show all again</button>
+        </div>
+        {% endif %}
+      </fieldset>
+
+      <fieldset>
+        <legend>Arrangement</legend>
+        <div class="grid">
+          <label>Order
+            <select name="order" id="wall-order">
+              <option value="shuffle" {{ 'selected' if wall_opts.order == 'shuffle' }}>Shuffled</option>
+              <option value="lightness" {{ 'selected' if wall_opts.order == 'lightness' }}>Dark to light</option>
+              <option value="hue" {{ 'selected' if wall_opts.order == 'hue' }}>By colour (warm to cool)</option>
+              <option value="artist" {{ 'selected' if wall_opts.order == 'artist' }}>By artist</option>
+            </select></label>
+          <label id="wall-axis-field">Runs
+            <select name="sort_axis">
+              <option value="row" {{ 'selected' if wall_opts.sort_axis == 'row' }}>Across in rows</option>
+              <option value="column" {{ 'selected' if wall_opts.sort_axis == 'column' }}>Down in columns</option>
+            </select></label>
+        </div>
+        <p class="muted">A sorted wall still opens on a different stretch of
+          your library each time the scene starts, and swaps stay near each
+          tile's place in the order — so a gradient keeps its shape instead of
+          speckling. <em>Dark to light</em> works on any library;
+          <em>by colour</em> depends on yours having covers spread across the
+          spectrum.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Motion</legend>
+        <div class="grid">
+          <label>Swap a tile every (seconds)
+            <input type="number" name="swap_interval"
+                   value="{{ wall_opts.swap_interval }}" min="0" max="3600"></label>
+          <label>Cross-fade (ms)
+            <input type="number" name="swap_fade"
+                   value="{{ wall_opts.swap_fade }}" min="0" max="10000"></label>
+        </div>
+        <p class="muted">0 seconds holds the wall still. The swap needs spare
+          covers to work: if every cover you have is already on screen there is
+          nothing to bring in, and the wall stays put whatever this says.</p>
+        <label class="checkbox"><input type="checkbox" name="drift"
+               {{ 'checked' if wall_opts.drift }}>
+          Slow drift — each cover gently scales and pans on its own cycle</label>
+        <label class="checkbox"><input type="checkbox" name="assemble"
+               {{ 'checked' if wall_opts.assemble }}>
+          Assemble on load — covers fade in one by one, in random places</label>
+        <label class="checkbox"><input type="checkbox" name="breathe"
+               {{ 'checked' if wall_opts.breathe }}>
+          Breathe — tiles drift slightly in and out of full brightness</label>
+        <label>Spotlight one cover every (seconds, 0 = never)
+          <input type="number" name="hero_interval"
+                 value="{{ wall_opts.hero_interval }}" min="0" max="3600"></label>
+      </fieldset>
+
+      <button type="submit" class="primary">Save art wall settings</button>
+      <p class="muted">Per-source overrides work here too, e.g.
+        <code>?cols=3&amp;gap=8&amp;radius=6</code> — handy for running a tall
+        portrait wall and a wide one from the same settings.</p>
+    </form>
+  </div>
+</div>
+
 <script>
-document.querySelectorAll('.promo-demo').forEach(sel => {
-  sel.addEventListener('change', () => {
-    const frame = document.getElementById(sel.dataset.frame);
-    // promo=1 as well, so the card can be styled before that overlay's own
-    // checkbox is ticked; promo_demo pins the state and skips the empty-for
-    // delay, so neither preview waits on your real queue.
-    frame.src = frame.src.split('?')[0]
-      + (sel.value ? '?promo_demo=' + sel.value + '&promo=1' : '');
+
+/*
+  Queue overlay layout. Two jobs, both driven by the direction select.
+
+  1. The field checkboxes are dimmed, NOT disabled, when the strip is
+     horizontal: a disabled checkbox posts nothing, so saving would quietly
+     wipe the text choices the user gets back when they switch to a column.
+     The server does the actual forcing.
+  2. A horizontal strip does not wrap, and the overlay body clips what does
+     not fit, so overshooting the source width loses covers with nothing on
+     screen to say so. Do the arithmetic here instead, where they are choosing
+     the numbers.
+*/
+(function () {
+  const dir = document.getElementById('queue-direction');
+  const fields = document.getElementById('queue-fields');
+  const note = document.getElementById('queue-fields-note');
+  const posNote = document.getElementById('queue-position-note');
+  const width = document.getElementById('queue-width');
+  const max = document.getElementById('queue-max');
+  const art = document.getElementById('queue-art');
+  const gap = document.getElementById('queue-gap');
+  const radius = document.getElementById('queue-radius');
+  const radiusNote = document.getElementById('queue-radius-note');
+  const preset = document.getElementById('queue-preset');
+  const card = document.getElementById('queue-card');
+  const presetNote = document.getElementById('queue-preset-note');
+  if (!dir || !fields || !width) return;
+
+  const num = (el, fallback) => {
+    const n = parseInt(el && el.value, 10);
+    return isNaN(n) ? fallback : n;
+  };
+  const textOn = () => ['show_title', 'show_artist', 'show_requester']
+    .some(n => fields.querySelector('[name="' + n + '"]').checked);
+
+  // Steer the look the FIRST time a change makes the overlay artwork-only —
+  // light and glass wrap every cover in a pale box, which is the thing that
+  // looks wrong once there is no text in it. A steer, not a rule: a dark card
+  // behind covers is a real choice, so both controls stay editable and a
+  // second change never overrides what they picked.
+  let wasArtOnly = dir.value === 'row' || !textOn();
+
+  function update() {
+    const row = dir.value === 'row';
+    const artOnly = row || !textOn();
+    fields.classList.toggle('fields-off', row);
+    note.hidden = !row;
+    // Only worth saying when they have done it themselves — in a row the
+    // note above has already explained it.
+    posNote.hidden = row || textOn();
+
+    if (artOnly && !wasArtOnly && preset && card) {
+      preset.value = 'minimal';
+      card.checked = false;
+      presetNote.hidden = false;
+    } else if (!artOnly && presetNote) {
+      presetNote.hidden = true;
+    }
+    wasArtOnly = artOnly;
+
+    if (radius && radiusNote) {
+      const size = Math.max(16, Math.min(300, num(art, 56)));
+      const r = Math.max(0, Math.min(150, num(radius, 6)));
+      radiusNote.textContent = r * 2 >= size
+        ? 'Art corners: round, at ' + size + 'px covers.'
+        : 'Art corners: 0 is square; ' + Math.ceil(size / 2)
+          + ' makes a circle at ' + size + 'px covers.';
+    }
+
+    if (!row) { width.textContent = ''; return; }
+    const n = Math.max(1, Math.min(20, num(max, 5)));
+    const size = Math.max(16, Math.min(300, num(art, 56)));
+    const g = Math.max(0, Math.min(100, num(gap, 10)));
+    // 8px of body padding each side, and n-1 gaps between n covers.
+    const needed = n * size + (n - 1) * g + 16;
+    width.textContent = n + ' cover' + (n === 1 ? '' : 's') + ' at ' + size
+      + 'px needs a browser source at least ' + needed
+      + 'px wide. It does not wrap, so anything past that is cut off.';
+  }
+
+  [dir, max, art, gap, radius].forEach(el => {
+    if (el) { el.addEventListener('input', update); el.addEventListener('change', update); }
   });
-});
+  fields.addEventListener('change', update);
+  // Once they change either of the two the steer touched, the note describing
+  // it is stale. Setting .value/.checked in code fires no change event, so
+  // this only ever hears the user.
+  [preset, card].forEach(el => {
+    if (el) el.addEventListener('change', () => { presetNote.hidden = true; });
+  });
+  update();
+})();
+
+// Sort direction only means something once there is an order to run in one.
+(function () {
+  const order = document.getElementById('wall-order');
+  const axis = document.getElementById('wall-axis-field');
+  if (!order || !axis) return;
+  const sync = () => { axis.style.visibility = order.value === 'shuffle' ? 'hidden' : ''; };
+  order.addEventListener('change', sync);
+  sync();
+})();
+
+// Restoring a hidden cover. Hiding is one click in the preview, so undoing it
+// has to be one click too — and it reloads so the preview picks the cover back
+// up rather than leaving the page disagreeing with the saved settings.
+(function () {
+  const post = body => fetch('/overlay/wall/exclude', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(r => r.json());
+
+  document.querySelectorAll('.hidden-cover').forEach(btn => {
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      post({ hash: btn.dataset.hash, action: 'show' })
+        .then(() => location.reload())
+        .catch(() => { btn.disabled = false; });
+    });
+  });
+
+  const all = document.getElementById('wall-show-all');
+  if (all) all.addEventListener('click', () => {
+    all.disabled = true;
+    post({ action: 'show_all' })
+      .then(() => location.reload())
+      .catch(() => { all.disabled = false; });
+  });
+})();
+
+// Art wall headroom. The tile swap needs SPARE covers, not merely enough: with
+// exactly as many covers as tiles every one is already on screen, so there is
+// nothing to bring in and the wall sits still however short the interval. So
+// report the ratio rather than a pass/fail.
+(function () {
+  const cols = document.getElementById('wall-cols');
+  const out = document.getElementById('wall-headroom');
+  if (!cols || !out) return;
+  const pool = {{ wall_pool }};
+
+  function update() {
+    const c = Math.max(2, Math.min(12, parseInt(cols.value, 10) || 6));
+    // Rows a 16:9 source fits at square tiles — the shape most scenes use.
+    const tiles = c * Math.max(1, Math.floor(c * 9 / 16));
+    if (!pool) { out.textContent = 'No covers in your library yet.'; return; }
+    const ratio = pool / tiles;
+    let verdict;
+    if (tiles > pool) {
+      verdict = 'more tiles than covers, so some will appear more than once';
+    } else if (ratio < 1.5) {
+      verdict = 'only just enough spares, so swaps will feel repetitive';
+    } else {
+      verdict = ratio.toFixed(1) + '× more covers than tiles — plenty to swap in';
+    }
+    out.textContent = pool + ' covers available. On a 16:9 source that is '
+      + c + ' × ' + Math.floor(c * 9 / 16) + ' = ' + tiles + ' tiles: ' + verdict + '.';
+  }
+
+  cols.addEventListener('input', update);
+  update();
+})();
+
+/*
+  Live preview. Every field in these three forms already exists as a
+  query-param override on the overlay itself, so the preview re-implements no
+  styling whatsoever: it hands the overlay the form as it currently stands and
+  lets the server apply its own rules — a horizontal strip forcing artwork
+  only, the position number dropping when no text field is on. That is what
+  keeps the preview honest about what a browser source will actually render.
+
+  The cost is that the preview is no longer necessarily what is on stream, so
+  an edited form says so under its own preview, with a Save button where the
+  eye already is.
+
+  The queue and now-playing pages poll their JSON and restyle in place, so they
+  take the new query string by postMessage and never reload. The art wall
+  fetches once and then runs on its own, so it gets a new src instead — and
+  replays its assemble animation, exactly as it does when an OBS scene starts.
+
+  Each frame is also laid out at its real browser-source size and scaled down
+  whole (see rescale below), because every setting on this page is in absolute
+  pixels: a preview merely shaped like the source shows different proportions
+  from the same numbers.
+*/
+(function () {
+  const PANELS = [
+    {
+      form: 'queue-form', frame: 'preview', dirty: 'queue-dirty', live: true,
+      size: { key: 'queue', w: 500, h: 800 },
+      bools: {
+        include_current: 'current', show_artwork: 'art', show_position: 'position',
+        show_title: 'title', show_artist: 'artist', show_requester: 'requester',
+        show_promo: 'promo', show_card: 'card'
+      },
+      values: {
+        max_songs: 'max', direction: 'dir', preset: 'preset',
+        font_size: 'font_size', art_size: 'art_size', art_radius: 'art_radius',
+        row_gap: 'row_gap', accent: 'accent', animation: 'anim',
+        anim_speed: 'speed'
+      }
+    },
+    {
+      form: 'current-form', frame: 'current-preview', dirty: 'current-dirty',
+      live: true,
+      size: { key: 'current', w: 900, h: 220 },
+      bools: {
+        show_artwork: 'art', show_label: 'label', show_title: 'title',
+        show_artist: 'artist', show_requester: 'requester',
+        show_promo: 'promo', hide_when_empty: 'hide_empty'
+      },
+      values: {
+        layout: 'layout', label_text: 'label_text', preset: 'preset',
+        font_size: 'font_size', art_size: 'art_size', accent: 'accent',
+        animation: 'anim', anim_speed: 'speed'
+      },
+      // Saving an empty label falls back to "Now playing", and the override is
+      // ignored when blank — so without this, clearing the box would leave the
+      // old caption sitting in the preview.
+      tweak: p => { if (!p.get('label_text')) p.set('label_text', 'Now playing'); }
+    },
+    {
+      form: 'wall-form', frame: 'wall-preview', dirty: 'wall-dirty', live: false,
+      size: { key: 'wall', w: 1920, h: 1080 },
+      bools: {
+        dedupe: 'dedupe', drift: 'drift', assemble: 'assemble', breathe: 'breathe'
+      },
+      values: {
+        columns: 'cols', gap: 'gap', radius: 'radius', filter: 'filter',
+        order: 'order', sort_axis: 'axis', swap_interval: 'swap',
+        swap_fade: 'fade', hero_interval: 'hero'
+      },
+      // Click-to-hide is half the point of this preview, and it is not one of
+      // the settings this form saves.
+      tweak: p => p.set('pick', '1')
+    }
+  ];
+
+  // The form's own state, independent of the preview-only controls beside it.
+  const state = form => new URLSearchParams(new FormData(form)).toString();
+
+  // Each panel's rescale, replayed when the window changes width — the scale
+  // is the panel's width over the source's, so a resized window is a new one.
+  const rescalers = [];
+
+  PANELS.forEach(spec => {
+    const form = document.getElementById(spec.form);
+    const frame = document.getElementById(spec.frame);
+    if (!form || !frame) return;
+    const dirty = document.getElementById(spec.dirty);
+    const box = frame.closest('.overlay-preview');
+    const demo = document.querySelector(
+      '.promo-demo[data-frame="' + spec.frame + '"]');
+    // The form as saved. Comparing against this rather than latching on the
+    // first keystroke means putting a value back clears the warning.
+    const clean = state(form);
+    let timer = null;
+
+    // Lay the frame out at the source's real size and scale the whole thing
+    // down, so every px setting keeps its true proportion. Sizing the box to
+    // the panel instead renders a different picture from the same numbers: at
+    // 9 columns, radius 20 is a fifth of a 96px preview tile and a tenth of
+    // the 208px tile OBS draws at 1920x1080. The size belongs to the
+    // streamer's browser source, which the app cannot know, so it is asked for
+    // here and kept in localStorage — it changes nothing OBS reads, so it has
+    // no business in config.json.
+    const stage = frame.parentElement;
+    const wIn = document.getElementById(spec.size.key + '-size-w');
+    const hIn = document.getElementById(spec.size.key + '-size-h');
+    const note = document.getElementById(spec.size.key + '-scale-note');
+    const store = 'previewSize.' + spec.size.key;
+    const clampPx = (v, fallback) => {
+      const n = parseInt(v, 10);
+      return (n >= 100 && n <= 4096) ? n : fallback;
+    };
+
+    function rescale() {
+      const w = clampPx(wIn.value, spec.size.w);
+      const h = clampPx(hIn.value, spec.size.h);
+      frame.style.width = w + 'px';
+      frame.style.height = h + 'px';
+      // Never past 1:1: scaling an iframe up stretches its raster, and a
+      // preview bigger than the source is the same lie in the other direction.
+      const scale = Math.min(1, stage.clientWidth / w);
+      frame.style.setProperty('--preview-scale', scale);
+      stage.style.height = Math.round(h * scale) + 'px';
+      note.textContent = scale >= 1
+        ? 'shown at actual size'
+        : 'shown at ' + Math.round(scale * 100) + '%';
+    }
+
+    if (stage && wIn && hIn && note) {
+      let saved = null;
+      try { saved = JSON.parse(localStorage.getItem(store)); } catch (e) {}
+      wIn.value = clampPx(saved && saved.w, spec.size.w);
+      hIn.value = clampPx(saved && saved.h, spec.size.h);
+      rescale();
+      rescalers.push(rescale);
+      let sizeTimer = null;
+      [wIn, hIn].forEach(el => {
+        // Debounced, or a width typed digit by digit resizes the frame at
+        // every keystroke on its way to a sane number.
+        el.addEventListener('input', () => {
+          clearTimeout(sizeTimer);
+          sizeTimer = setTimeout(() => {
+            rescale();
+            try {
+              localStorage.setItem(
+                store, JSON.stringify({ w: wIn.value, h: hIn.value }));
+            } catch (e) {}
+          }, 400);
+        });
+      });
+    }
+
+    function params() {
+      const p = new URLSearchParams();
+      for (const name in spec.bools) {
+        const el = form.querySelector('[name="' + name + '"]');
+        if (el) p.set(spec.bools[name], el.checked ? '1' : '0');
+      }
+      for (const name in spec.values) {
+        const el = form.querySelector('[name="' + name + '"]');
+        // A number being typed is momentarily blank. Leave it out and let the
+        // saved value stand, rather than sending nothing for it.
+        if (el && el.value !== '') p.set(spec.values[name], el.value);
+      }
+      if (demo && demo.value) {
+        // promo=1 as well, so the card can be styled before that overlay's own
+        // checkbox is ticked; promo_demo pins the state and skips the empty-for
+        // delay, so neither preview waits on your real queue.
+        p.set('promo_demo', demo.value);
+        p.set('promo', '1');
+      }
+      if (spec.tweak) spec.tweak(p);
+      return p.toString();
+    }
+
+    function apply() {
+      const qs = params();
+      if (spec.live) {
+        frame.contentWindow.postMessage({ overlayQs: qs }, location.origin);
+      } else {
+        frame.src = frame.src.split('?')[0] + (qs ? '?' + qs : '');
+      }
+    }
+
+    function edited() {
+      const unsaved = state(form) !== clean;
+      if (dirty) dirty.hidden = !unsaved;
+      if (box) box.classList.toggle('drafting', unsaved);
+      clearTimeout(timer);
+      // Long enough to sit out a drag on the colour picker or a number being
+      // typed; short enough that the preview feels like it is following you.
+      timer = setTimeout(apply, spec.live ? 250 : 400);
+    }
+
+    form.addEventListener('input', edited);
+    form.addEventListener('change', edited);
+    // The demo card is not a saved setting, so it drives the preview without
+    // touching the unsaved warning.
+    if (demo) demo.addEventListener('change', apply);
+    // A message posted before the iframe has loaded is lost, and a reload
+    // throws away everything unsaved — so re-send on every load.
+    if (spec.live) frame.addEventListener('load', apply);
+  });
+
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => rescalers.forEach(fn => fn()), 150);
+  });
+})();
 
 document.querySelectorAll('.copy-btn').forEach(btn => {
   btn.addEventListener('click', async () => {

@@ -67,8 +67,10 @@ function render() {
   rowsEl.innerHTML = '';
   for (const r of filtered) {
     const tr = document.createElement('tr');
-    const thumb = r.image_url
-      ? `<img class="thumb" src="${r.image_url}" alt="">`
+    // The small cached copy, not the full image, and only once a row nears the
+    // screen: the first visit then generates only the thumbnails it shows.
+    const thumb = r.thumb_url
+      ? `<img class="thumb" src="${r.thumb_url}" alt="" loading="lazy">`
       : `<div class="thumb empty"></div>`;
     const reviewUrl = '{{ url_for("review_page") }}?key=' + encodeURIComponent(r.key);
     tr.innerHTML = `<td>${thumb}</td><td>${esc(r.title)}</td><td>${esc(r.artist)}</td>
@@ -85,7 +87,10 @@ function esc(s){ return (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;',
 
 async function loadRows() {
   const r = await fetch('{{ url_for("api_entries") }}?filter=songlist');
-  allRows = (await r.json()).entries;
+  const d = await r.json();
+  // An unreadable library must not look like a songlist with nothing in it.
+  if (!r.ok) statusEl.textContent = d.error || 'Could not load your songs.';
+  allRows = d.entries || [];
   render();
 }
 

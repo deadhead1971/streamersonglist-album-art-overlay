@@ -23,7 +23,10 @@ from flask import (
 )
 from PIL import Image
 
-from . import __version__, artwork, config, runtime, songlist, updates
+from . import (
+    __version__, artwork, config, fileio, imaging, library, runtime, songlist,
+    sources, updates,
+)
 from .library import (
     Library, STATUS_PROPOSED, STATUS_UNVERIFIED,
     normalize_key,
@@ -38,6 +41,18 @@ app = Flask(__name__)
 def inject_version():
     """Every page footer/banner can show which version is running."""
     return {"app_version": __version__}
+
+
+@app.errorhandler(library.ManifestUnreadable)
+def manifest_unreadable(e):
+    """
+    Any request that needs the library while its manifest can't be read ends
+    here, before it could save anything — which is the point. The banner on
+    every dashboard page carries the same message.
+    """
+    if request.path.startswith("/api/") or request.path.endswith(".json"):
+        return jsonify({"ok": False, "error": str(e)}), 503
+    return app.response_class(str(e), status=503, mimetype="text/plain")
 
 
 # Snapshot of the last fetched songlist (for the songs table). Lives beside the
@@ -173,7 +188,14 @@ class ProposeJob:
 
     def _run(self, cfg: dict, keys: list = None):
         # Fresh Library instance for the worker thread.
-        lib = Library()
+        try:
+            lib = Library()
+        except library.ManifestUnreadable:
+            # Already logged, and bannered on every dashboard page. Proposing
+            # into an unreadable manifest would start the library over.
+            with self.lock:
+                self.running = False
+            return
         candidates = (
             lib.all_entries().items() if keys is None
             else [(k, lib.get_by_key(k)) for k in keys]
@@ -220,6 +242,43 @@ propose_job = ProposeJob()
 # Serialisation helpers
 # ---------------------------------------------------------------------------
 
+# Thumbnail size for list views. The Songs table draws 66px squares; 256 is the
+# smallest size the thumbnail cache keeps, and covers them at 2x and more.
+LIST_THUMB_SIZE = 256
+
+
+def _thumb_url(lib: Library, key: str, entry: dict):
+    """
+    URL of a small cached copy of the entry's image, or None if it has none.
+
+    Versioned by the image file itself rather than by ``updated_at``: browsers
+    keep this URL for good (see serve_image), so it must change whenever the
+    picture does — including a file replaced by hand, which touches nothing in
+    the manifest.
+    """
+    try:
+        stat = lib.image_path(entry).stat()
+    except (OSError, AttributeError):  # no file, or it just went away
+        return None
+    return url_for("serve_image", key=key, s=LIST_THUMB_SIZE,
+                   v=f"{stat.st_mtime_ns:x}-{stat.st_size:x}")
+
+
+def _send_thumbnail(thumb: Path):
+    """
+    A cached thumbnail, kept by the browser for good: its URL changes whenever
+    the picture does (a content hash, or the file version from _thumb_url).
+
+    Read through fileio.read_bytes rather than send_file's own open: on
+    Windows, opening a file in the instant another request renames it into
+    the cache fails with "Permission denied", and read_bytes rides that out.
+    Thumbnails are small, so holding one in memory costs nothing.
+    """
+    resp = app.response_class(fileio.read_bytes(thumb), mimetype="image/webp")
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
 def entry_view(lib: Library, key: str, entry: dict) -> dict:
     """JSON-friendly view of a manifest entry for the UI."""
     candidates = entry.get("candidates", [])
@@ -232,6 +291,10 @@ def entry_view(lib: Library, key: str, entry: dict) -> dict:
         {
             "index": i,
             "url": c.get("url"),
+            # What the gallery tile loads: an iTunes candidate is 1000px, and a
+            # page of them is megabytes for tiles 150px wide.
+            "preview": sources.itunes_art_url(c.get("url"),
+                                              sources.ITUNES_PREVIEW_SIZE),
             "source": c.get("source"),
             "album": c.get("album"),
             "similarity": c.get("similarity"),
@@ -258,6 +321,9 @@ def entry_view(lib: Library, key: str, entry: dict) -> dict:
         "sources_exhausted": all(s in searched for s in artwork.SOURCE_ORDER),
         "image_url": url_for("serve_image", key=key,
                              v=entry.get("updated_at", "")) if lib.has_image(entry) else None,
+        # For anything drawn small. The Songs table used to load image_url for
+        # every row: 222 MB of full-size PNGs for a 186-song list.
+        "thumb_url": _thumb_url(lib, key, entry),
     }
 
 
@@ -313,6 +379,8 @@ def _verify_saved_credential(cfg: dict, previous_token: str) -> dict:
         password manager filling the box, which is what this form's
         username+password shape invites) must not be able to replace a
         working token.
+      * SSL has no such channel       → save (the user typed that name), and
+        say it is the username that is wrong, not the token
       * the check itself fails        → not a verdict: save, and say it could
         not be checked
     """
@@ -331,6 +399,9 @@ def _verify_saved_credential(cfg: dict, previous_token: str) -> dict:
                                    f"saved — the one that was already stored "
                                    f"is still in use."}
         return {"token_error": str(e)}
+    except songlist.StreamerNotFound as e:
+        # Before the generic branch, which would blame the token for this.
+        return {"username_error": str(e)}
     except requests.RequestException as e:
         return {"token_warning": f"Saved, but the token could not be checked "
                                  f"just now: {e}"}
@@ -410,9 +481,6 @@ def save_settings():
         form.get("updates_check_enabled") == "on"
     )
 
-    # Host/token/platform may have changed — re-probe which API is live. This
-    # comes before the check below so it can't answer from a cached verdict.
-    songlist.reset_backend()
     notice = _verify_saved_credential(cfg, previous_token)
 
     config.save_config(cfg)
@@ -527,7 +595,6 @@ def api_test_connection():
         return jsonify({"ok": True, "id": sid,
                         "name": streamer.get("name"),
                         "avatar": streamer.get("avatar"),
-                        "backend": streamer.get("backend"),
                         "token_type": token_type,
                         "token_type_changed": token_type != asked_for,
                         "song_count": songlist.fetch_song_count(sid, cfg=cfg)})
@@ -715,6 +782,21 @@ def serve_image():
     path = lib.image_path(entry)
     if not path or not path.exists():
         return "no image", 404
+
+    # ?s=<px>: a small WebP from the same content-hash cache as the art wall's
+    # tiles, so a cover already thumbnailed for the wall is reused here.
+    if request.args.get("s"):
+        try:
+            requested = int(request.args.get("s"))
+        except (TypeError, ValueError):
+            requested = LIST_THUMB_SIZE
+        digest = library.content_hash(path)
+        thumb = (imaging.ensure_thumbnail(path, digest,
+                                          imaging.snap_thumb_size(max(1, requested)))
+                 if digest else None)
+        if thumb is not None:
+            return _send_thumbnail(thumb)
+        # An image that can't be thumbnailed still shows, just at full size.
     return send_file(path, mimetype="image/png")
 
 
@@ -758,7 +840,10 @@ def api_update_skip():
 
 @app.route("/api/runtime/status")
 def api_runtime_status():
-    return jsonify(runtime.service.status())
+    status = runtime.service.status()
+    # Every dashboard page polls this, so the library's banner rides along.
+    status["library"] = library.manifest_problem()
+    return jsonify(status)
 
 
 # Statuses whose stored image the overlay will show (rejected_all means the
@@ -768,6 +853,11 @@ _OVERLAY_STATUSES = artwork.USABLE_STATUSES
 _OVERLAY_PRESETS = ("dark", "light", "minimal", "glass")
 _OVERLAY_ANIMATIONS = ("slide", "fade", "none")
 _OVERLAY_SPEEDS = ("normal", "fast")
+_OVERLAY_DIRECTIONS = ("column", "row")
+
+# The fields that make a row more than a cover. Whether any of them is on is
+# what "artwork only" means, and two rules key off it (see overlay_options).
+_OVERLAY_TEXT_KEYS = ("show_title", "show_artist", "show_requester")
 
 # Query-param overrides so one config can drive multiple differently-styled
 # browser sources: bools are 0/1, e.g. /overlay/queue?max=3&current=0&preset=glass
@@ -779,6 +869,7 @@ _OVERLAY_BOOL_KEYS = {
     "requester": "show_requester",
     "position": "show_position",
     "promo": "show_promo",
+    "card": "show_card",
 }
 
 
@@ -823,12 +914,33 @@ def _merge_overlay_options(cfg: dict, args, section: str,
 
 def overlay_options(cfg: dict, args) -> dict:
     """Effective queue overlay options: config defaults + query overrides."""
-    return _merge_overlay_options(
+    opts = _merge_overlay_options(
         cfg, args, "overlay", _OVERLAY_BOOL_KEYS,
         (("max", "max_songs", 1, 20),
          ("font_size", "font_size", 8, 72),
          ("art_size", "art_size", 16, 300),
+         ("art_radius", "art_radius", 0, 150),
          ("row_gap", "row_gap", 0, 100)))
+    if args.get("dir") in _OVERLAY_DIRECTIONS:
+        opts["direction"] = args.get("dir")
+    if opts.get("direction") not in _OVERLAY_DIRECTIONS:
+        opts["direction"] = "column"
+
+    # Horizontal is artwork-only, and that is settled HERE rather than left to
+    # the template or the settings form. The saved text choices are kept
+    # untouched in config so switching back to a column restores them — but a
+    # tab left open on the old form, or a hand-typed ?dir=row&title=1, must not
+    # be able to render text the strip has no room for. Artwork is forced on
+    # for the same reason: a row with every field off is an empty overlay.
+    if opts["direction"] == "row":
+        for key in _OVERLAY_TEXT_KEYS:
+            opts[key] = False
+        opts["show_artwork"] = True
+    # With every text field off there is no meta block for the position number
+    # to sit in, and beside a bare cover it puts the covers on an uneven pitch.
+    if not any(opts[key] for key in _OVERLAY_TEXT_KEYS):
+        opts["show_position"] = False
+    return opts
 
 
 def overlay_current_options(cfg: dict, args) -> dict:
@@ -844,9 +956,100 @@ def overlay_current_options(cfg: dict, args) -> dict:
     return opts
 
 
-def _resolve_art(lib: Library, title: str, artist: str) -> str:
+_WALL_FILTERS = ("songlist", "all")
+_WALL_ORDERS = library.WALL_ORDERS
+_WALL_AXES = ("row", "column")
+
+_WALL_BOOL_KEYS = {
+    "dedupe": "dedupe",
+    "drift": "drift",
+    "assemble": "assemble",
+    "breathe": "breathe",
+}
+
+# (query param, config key, min, max). ``columns`` is capped at 12 because past
+# that a normal library has over half of itself on screen at once, which leaves
+# the swap nothing to draw on.
+_WALL_INT_SPECS = (
+    ("cols", "columns", 2, 12),
+    ("gap", "gap", 0, 64),
+    ("radius", "radius", 0, 64),
+    ("swap", "swap_interval", 0, 3600),
+    ("fade", "swap_fade", 0, 10000),
+    ("hero", "hero_interval", 0, 3600),
+)
+
+
+def wall_options(cfg: dict, args) -> dict:
+    """
+    Effective art wall options: defaults + config + query overrides.
+
+    Deliberately not routed through _merge_overlay_options: the wall has no
+    preset, animation mode or accent colour, and that helper would graft those
+    keys onto the section where nothing reads them.
+    """
+    opts = dict(config.DEFAULT_CONFIG["wall"])
+    opts.update(cfg.get("wall", {}))
+
+    for param, key in _WALL_BOOL_KEYS.items():
+        if param in args:
+            opts[key] = args.get(param) not in ("0", "false", "no", "")
+    for param, key, lo, hi in _WALL_INT_SPECS:
+        if param in args:
+            try:
+                opts[key] = min(hi, max(lo, int(args.get(param))))
+            except (TypeError, ValueError):
+                pass
+    if args.get("filter") in _WALL_FILTERS:
+        opts["filter"] = args.get("filter")
+    if args.get("order") in _WALL_ORDERS:
+        opts["order"] = args.get("order")
+    if args.get("axis") in _WALL_AXES:
+        opts["sort_axis"] = args.get("axis")
+    # An unknown order from a hand-edited config would otherwise fall through
+    # to "no sorting at all", which looks like the setting being ignored.
+    if opts.get("order") not in _WALL_ORDERS:
+        opts["order"] = "shuffle"
+    if opts.get("sort_axis") not in _WALL_AXES:
+        opts["sort_axis"] = "row"
+    # ``source`` is reserved for a future live-queue mode. Coerce anything else
+    # back rather than letting a stale config or a typo render an empty wall.
+    if opts.get("source") != "library":
+        opts["source"] = "library"
+    return opts
+
+
+def wall_pool(cfg: dict, opts: dict, lib=None) -> list:
+    """The eligible tiles for these options, in no particular order."""
+    return (lib or Library()).tile_pool(
+        songlist_only=(opts.get("filter") == "songlist"),
+        exclude=opts.get("exclude") or (),
+        dedupe=bool(opts.get("dedupe", True)),
+    )
+
+
+def wall_tiles(cfg: dict, opts: dict) -> list:
+    """The tile pool arranged into the configured order."""
+    lib = Library()
+    return library.order_tiles(lib, wall_pool(cfg, opts, lib),
+                               opts.get("order", "shuffle"))
+
+
+def _overlay_library():
+    """
+    The library for an overlay render, or None when its manifest can't be
+    read. The overlay then shows the fallback image in place of each cover —
+    never an error on stream, and never a failing poll every few seconds.
+    """
+    try:
+        return Library()
+    except library.ManifestUnreadable:
+        return None
+
+
+def _resolve_art(lib, title: str, artist: str) -> str:
     """URL of the stored artwork for a song, or the overlay fallback image."""
-    entry = lib.get(title, artist)
+    entry = lib.get(title, artist) if lib is not None else None
     if (entry and entry.get("status") in _OVERLAY_STATUSES
             and lib.has_image(entry)):
         return url_for("serve_image", key=normalize_key(title, artist),
@@ -861,8 +1064,8 @@ _AVATAR_CACHE = {"key": None, "url": None}
 
 def _streamer_avatar(cfg: dict):
     """
-    The streamer's avatar URL (v2 API only — v1 hands out no avatar), from the
-    runtime service if it is up, else resolved and cached here.
+    The streamer's avatar URL, from the runtime service if it is up, else
+    resolved and cached here.
     """
     url = runtime.service.status().get("avatar")
     if url:
@@ -937,8 +1140,8 @@ def _promo_item(cfg: dict, opts: dict, args):
         if empty_for is None or empty_for < delay:
             return None
 
-    # Only a definite "closed" picks the closed card. Unknown — v1, no username,
-    # or a check that has never succeeded — reads as open: losing the card on a
+    # Only a definite "closed" picks the closed card. Unknown — no username, or
+    # a check that has never succeeded — reads as open: losing the card on a
     # failed API read is worse than showing it a minute after requests shut.
     if demo in ("open", "closed"):
         active = demo == "open"
@@ -992,15 +1195,15 @@ def overlay_queue_json():
     cfg = config.load_config()
     opts = overlay_options(cfg, request.args)
 
-    # `upcoming` excludes the now-playing song on both backends, so the
-    # now-playing card is prepended rather than the list being sliced.
+    # `upcoming` excludes the now-playing song, so the now-playing card is
+    # prepended rather than the list being sliced.
     playing, upcoming = runtime.service.get_queue(cfg)
     items = list(upcoming)
     if opts["include_current"] and playing is not None:
         items.insert(0, playing)
     items = items[: opts["max_songs"]]
 
-    lib = Library()
+    lib = _overlay_library()
     rows = []
     # Display numbering, not the API's: v2 numbers the now-playing song 0 and
     # restarts the upcoming queue at 1. Excluding the current song still starts
@@ -1058,7 +1261,8 @@ def overlay_current_json():
     item = playing if playing is not None else (upcoming[0] if upcoming else None)
     view = songlist.queue_item_view(item, 1) if item is not None else None
     if view is not None:
-        view["art"] = _resolve_art(Library(), view["title"], view["artist"])
+        view["art"] = _resolve_art(_overlay_library(), view["title"],
+                                   view["artist"])
     else:
         # Promo card wins over hide_when_empty: showing something is the point.
         view = _promo_item(cfg, opts, request.args)
@@ -1074,6 +1278,90 @@ def overlay_current_page():
                            qs=request.query_string.decode("utf-8"))
 
 
+# ---------------------------------------------------------------------------
+# Art wall
+# ---------------------------------------------------------------------------
+
+@app.route("/overlay/wall")
+def overlay_wall_page():
+    cfg = config.load_config()
+    opts = wall_options(cfg, request.args)
+    return render_template("overlay_wall.html", opts=opts,
+                           pick=request.args.get("pick") == "1",
+                           qs=request.query_string.decode("utf-8"))
+
+
+@app.route("/overlay/wall.json")
+def overlay_wall_json():
+    """
+    The tile pool, fetched once on page load and never polled — the wall reads
+    library data, not the queue, so there is nothing to poll for. That makes it
+    the cheapest overlay on the server and the most expensive in the browser,
+    the exact inverse of the queue and now-playing cards.
+    """
+    cfg = config.load_config()
+    opts = wall_options(cfg, request.args)
+    return jsonify({"tiles": wall_tiles(cfg, opts), "options": opts})
+
+
+@app.route("/overlay/wall/tile")
+def overlay_wall_tile():
+    """
+    One thumbnail, addressed by image content hash rather than by library key,
+    so identical artwork shares a single URL and therefore a single browser
+    cache entry. Cached immutably: the hash IS the version, so changed artwork
+    is a different URL and a stale image cannot be served.
+    """
+    digest = (request.args.get("h") or "").strip().lower()
+    if len(digest) != 32 or not all(c in "0123456789abcdef" for c in digest):
+        return "bad hash", 400
+    try:
+        requested = int(request.args.get("s", 512))
+    except (TypeError, ValueError):
+        requested = 512
+    size = imaging.snap_thumb_size(max(1, requested))
+
+    thumb = imaging.thumbnail_path(digest, size)
+    if not thumb.exists():
+        source = Library().path_for_hash(digest)
+        if source is None:
+            return "not found", 404
+        thumb = imaging.ensure_thumbnail(source, digest, size)
+        if thumb is None:
+            return "unreadable", 404
+
+    return _send_thumbnail(thumb)
+
+
+@app.route("/overlay/wall/exclude", methods=["POST"])
+def overlay_wall_exclude():
+    """
+    Hide or restore one cover. Clicking a tile in the settings preview is the
+    whole curation story — an exclude list rather than a picker, because the
+    real case is "that one cover is wrong", not "let me choose all 128".
+    """
+    data = request.json or {}
+    action = data.get("action")
+    cfg = config.load_config()
+    opts = cfg.setdefault("wall", {})
+
+    if action == "show_all":
+        opts["exclude"] = []
+        config.save_config(cfg)
+        return jsonify({"ok": True, "excluded": 0})
+
+    digest = str(data.get("hash", "")).strip().lower()
+    if len(digest) != 32 or not all(c in "0123456789abcdef" for c in digest):
+        return jsonify({"ok": False, "error": "bad hash"}), 400
+
+    excluded = [h for h in (opts.get("exclude") or []) if h != digest]
+    if action != "show":
+        excluded.append(digest)
+    opts["exclude"] = excluded
+    config.save_config(cfg)
+    return jsonify({"ok": True, "excluded": len(excluded)})
+
+
 @app.route("/overlay")
 def overlay_settings_page():
     cfg = config.load_config()
@@ -1084,6 +1372,33 @@ def overlay_settings_page():
     overlay_url = url_for("overlay_queue_page", _external=True)
     current_url = url_for("overlay_current_page", _external=True)
     loader_dir = Path(__file__).resolve().parent.parent / "obs"
+
+    # The wall's tile count drives the headroom advice in its panel. Hashing the
+    # library the first time costs a second or so; it is memoised per file after
+    # that, and this is a page load, never a request the overlays wait on.
+    wall_opts = wall_options(cfg, {})
+    # Only the count is needed here, so skip the ordering pass — colour sorts
+    # profile every cover, which is wasted work for a number.
+    wall_count = len(wall_pool(cfg, wall_opts))
+
+    # Hidden covers are shown back as thumbnails so they can be restored one at
+    # a time. They are excluded from the pool by definition, so look them up
+    # against the unfiltered library rather than the pool.
+    wall_hidden = []
+    excluded = wall_opts.get("exclude") or []
+    if excluded:
+        everything = {
+            tile["hash"]: tile
+            for tile in Library().tile_pool(songlist_only=False, dedupe=False)
+        }
+        for digest in excluded:
+            found = everything.get(digest)
+            wall_hidden.append({
+                "hash": digest,
+                "name": found["songs"][0] if found else "No longer in your library",
+                "known": found is not None,
+            })
+
     return render_template("overlay_settings.html", opts=opts, cfg=cfg,
                            queue_loader=str(loader_dir / "overlay_queue.html"),
                            current_loader=str(loader_dir / "overlay_current.html"),
@@ -1091,6 +1406,12 @@ def overlay_settings_page():
                            promo=cfg.get("promo", {}),
                            has_avatar=bool(_streamer_avatar(cfg)),
                            layouts=_CURRENT_LAYOUTS,
+                           wall_opts=wall_opts, wall_pool=wall_count,
+                           wall_hidden=wall_hidden,
+                           wall_url=url_for("overlay_wall_page", _external=True),
+                           wall_loader=str(loader_dir / "overlay_wall.html"),
+                           wall_filters=_WALL_FILTERS, wall_orders=_WALL_ORDERS,
+                           wall_axes=_WALL_AXES,
                            overlay_url=overlay_url, presets=_OVERLAY_PRESETS,
                            animations=_OVERLAY_ANIMATIONS, speeds=_OVERLAY_SPEEDS)
 
@@ -1109,11 +1430,15 @@ def save_overlay_settings():
         opts["max_songs"] = 5
     for key, default, lo, hi in (("font_size", 20, 8, 72),
                                  ("art_size", 56, 16, 300),
+                                 ("art_radius", 6, 0, 150),
                                  ("row_gap", 10, 0, 100)):
         try:
             opts[key] = min(hi, max(lo, int(form.get(key, default))))
         except (TypeError, ValueError):
             opts[key] = default
+    direction = form.get("direction", "column")
+    opts["direction"] = (direction if direction in _OVERLAY_DIRECTIONS
+                         else "column")
     preset = form.get("preset", "dark")
     opts["preset"] = preset if preset in _OVERLAY_PRESETS else "dark"
     animation = form.get("animation", "slide")
@@ -1123,7 +1448,7 @@ def save_overlay_settings():
     opts["accent"] = form.get("accent", "#4da3ff").strip() or "#4da3ff"
 
     config.save_config(cfg)
-    return redirect(url_for("overlay_settings_page", saved=1))
+    return redirect(url_for("overlay_settings_page", saved=1) + "#queue-overlay")
 
 
 @app.route("/overlay/current", methods=["POST"])
@@ -1152,7 +1477,8 @@ def save_overlay_current_settings():
     opts["label_text"] = form.get("label_text", "").strip() or "Now playing"
 
     config.save_config(cfg)
-    return redirect(url_for("overlay_settings_page", saved="current"))
+    return redirect(url_for("overlay_settings_page", saved="current")
+                    + "#current-overlay")
 
 
 @app.route("/overlay/promo", methods=["POST"])
@@ -1175,6 +1501,34 @@ def save_overlay_promo_settings():
 
     config.save_config(cfg)
     return redirect(url_for("overlay_settings_page", saved="promo") + "#promo")
+
+
+@app.route("/overlay/wall", methods=["POST"])
+def save_overlay_wall_settings():
+    cfg = config.load_config()
+    form = request.form
+    opts = cfg.setdefault("wall", {})
+    defaults = config.DEFAULT_CONFIG["wall"]
+
+    for key in _WALL_BOOL_KEYS.values():
+        opts[key] = form.get(key) == "on"
+    for _param, key, lo, hi in _WALL_INT_SPECS:
+        try:
+            opts[key] = min(hi, max(lo, int(form.get(key, defaults[key]))))
+        except (TypeError, ValueError):
+            opts[key] = defaults[key]
+    filt = form.get("filter", "songlist")
+    opts["filter"] = filt if filt in _WALL_FILTERS else "songlist"
+    order = form.get("order", "shuffle")
+    opts["order"] = order if order in _WALL_ORDERS else "shuffle"
+    axis = form.get("sort_axis", "row")
+    opts["sort_axis"] = axis if axis in _WALL_AXES else "row"
+    # ``exclude`` is deliberately absent from this form: hiding and restoring
+    # happen immediately via /overlay/wall/exclude, so saving these settings
+    # must leave the list exactly as it found it.
+
+    config.save_config(cfg)
+    return redirect(url_for("overlay_settings_page", saved="wall") + "#wall")
 
 
 # ---------------------------------------------------------------------------
@@ -1242,6 +1596,12 @@ def run(host="127.0.0.1", port=5050, open_browser=True):
         raise SystemExit(1)
 
     first_run = config.ensure_config()
+    # Load the manifest before anything can write to it, so a damaged one is
+    # restored from its backup (or reported) now rather than mid-stream.
+    try:
+        Library()
+    except library.ManifestUnreadable:
+        pass  # logged by the library, and bannered on every dashboard page
     cfg = config.load_config()
     updates.start_background_check(cfg)
     if _runtime_wanted(cfg):

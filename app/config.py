@@ -12,7 +12,7 @@ import json
 import shutil
 from pathlib import Path
 
-from . import __version__
+from . import __version__, fileio
 
 # Repo root = parent of the app package directory.
 ROOT = Path(__file__).resolve().parent.parent
@@ -22,6 +22,12 @@ EXAMPLE_PATH = ROOT / "config.example.json"
 
 LIBRARY_DIR = ROOT / "library"
 MANIFEST_PATH = LIBRARY_DIR / "manifest.json"
+
+# Art wall thumbnail cache. Named by image content hash, so identical artwork
+# (31% of a real library) collapses to one file and one URL. Disposable —
+# deleting it just means the next wall load regenerates. Inside library/, which
+# is already gitignored.
+THUMBS_DIR = LIBRARY_DIR / "thumbs"
 
 LOG_FILE = ROOT / "artwork_fetcher.log"
 
@@ -35,10 +41,7 @@ USER_AGENT = (
 
 DEFAULT_CONFIG = {
     "streamersonglist_username": "",
-    # StreamerSonglist API. v1 (today's production) needs no credentials; the
-    # v2 rewrite requires auth on every read. The client detects which is live
-    # and only sends the token when one is set, so these can stay blank until
-    # SSL flips.
+    # StreamerSonglist API. Every read needs a token.
     #   api_base       blank = production; set to the staging host to test
     #   api_token      the SSL access token — NEVER commit this
     #   api_token_type which Authorization prefix the token needs. The two
@@ -89,6 +92,13 @@ DEFAULT_CONFIG = {
     "overlay": {
         "max_songs": 5,
         "include_current": True,
+        # Which way the list runs: "column" is the classic top-down list,
+        # "row" a horizontal strip of covers across the screen. Horizontal is
+        # artwork-only by design — a cover with its title beside it needs
+        # ~300px, and six of those overrun a 1920 source, so the text fields
+        # are forced off rather than offered and then truncated. It does not
+        # wrap: the strip's height stays put whatever the queue does.
+        "direction": "column",   # column | row
         "show_artwork": True,
         "show_title": True,
         "show_artist": True,
@@ -98,8 +108,17 @@ DEFAULT_CONFIG = {
         # when this overlay has nothing else to render.
         "show_promo": False,
         "preset": "dark",        # dark | light | minimal | glass
+        # Draw the preset's card behind each row. Off leaves the artwork
+        # floating on the transparent source — which is what "artwork only"
+        # always needed: hiding the text alone still left the cover sitting in
+        # a full-width empty box. The empty-queue promo card is exempt, since
+        # it shows alone and its message has to stay readable.
+        "show_card": True,
         "font_size": 20,         # px, base text size
         "art_size": 56,          # px, artwork thumbnail square
+        # px corner radius on the artwork. 0 is square; half of art_size or
+        # more is a circle, so the range has to reach half of art_size's cap.
+        "art_radius": 6,
         "row_gap": 10,           # px between rows
         "accent": "#4da3ff",     # position number / highlight colour
         "animation": "slide",    # slide | fade | none
@@ -141,6 +160,42 @@ DEFAULT_CONFIG = {
         "closed_text": "",
         "closed_subtext": "",
         "closed_image": "",
+    },
+    # Art wall (OBS browser source at /overlay/wall): a grid of album covers
+    # drawn from the local library. Unlike the other overlays this one reads no
+    # queue and polls nothing — the tile list is fetched once on load.
+    "wall": {
+        # The ONLY size control. Tiles are square at 1fr, so the number of rows
+        # is whatever fits the browser source's height — one setting covers
+        # landscape and portrait, and it survives a resize in OBS. Capped at 12
+        # because past that a normal library has over half of itself on screen.
+        "columns": 6,
+        "gap": 0,                # px between tiles. 0 = gapless mosaic
+        "radius": 0,             # px corner radius. 0 = square
+        # Reserved. v1 accepts "library" only; a live-queue source can land
+        # later without a config migration.
+        "source": "library",
+        "filter": "songlist",    # songlist = only songs still in the songlist
+        "dedupe": True,          # one tile per distinct image (see content_hash)
+        "exclude": [],           # content hashes the user has hidden
+        # shuffle | artist | lightness | hue. A sorted wall is not a fixed
+        # picture: the page opens on a random stretch of the sequence, so it
+        # looks different each time a scene starts while the order holds.
+        "order": "shuffle",
+        # Which way a sorted sequence runs across the grid: "row" fills left to
+        # right (a gradient reads as horizontal bands), "column" fills top to
+        # bottom (vertical bands). Ignored when order is shuffle.
+        "sort_axis": "row",
+        # Motion. The swap is what makes the wall feel alive: every
+        # swap_interval seconds one tile cross-fades to a cover that is not
+        # currently on screen. It needs SURPLUS to work — with exactly as many
+        # covers as tiles there is nothing to swap in and the wall is frozen.
+        "swap_interval": 4,      # seconds. 0 = static wall
+        "swap_fade": 1200,       # ms cross-fade
+        "drift": True,           # slow Ken Burns scale/pan, random per tile
+        "assemble": True,        # staggered fade-in on load, in random order
+        "breathe": False,        # slow opacity idle (compounds with drift)
+        "hero_interval": 0,      # seconds between highlight pulses. 0 = off
     },
     "reflection": {
         "enabled": True,
@@ -200,8 +255,10 @@ def load_config() -> dict:
         return dict(DEFAULT_CONFIG)
 
     try:
-        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        # utf-8-sig: a byte-order mark (Windows editors and PowerShell add one)
+        # used to make this a parse failure, i.e. silently all-default settings.
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+    except (ValueError, OSError):
         return dict(DEFAULT_CONFIG)
 
     if not isinstance(data, dict):
@@ -211,7 +268,12 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> None:
-    """Write config.json (pretty-printed, stable key order for clean diffs)."""
-    CONFIG_PATH.write_text(
-        json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    """
+    Write config.json (pretty-printed, stable key order for clean diffs).
+
+    Atomic: every overlay poll reads this file, and a read landing mid-write
+    could see a truncated file and get all-default settings back — which a
+    save handler reading at that moment would then have written out.
+    """
+    data = json.dumps(cfg, indent=2, ensure_ascii=False)
+    fileio.write_atomic(CONFIG_PATH, data.encode("utf-8"))
