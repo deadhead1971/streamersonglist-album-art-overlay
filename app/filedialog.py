@@ -3,15 +3,13 @@ The native file dialog behind every Browse… button.
 
 Tkinter must own the main thread of its interpreter, which Flask request
 threads are not, so the dashboard runs this in a short-lived child process
-(dashboard.api_browse). It used to be a ``python -c`` string; it is a module so
-a packaged build can reach it too — a frozen app's sys.executable is the app
-itself, which knows nothing of ``-c``, and PyInstaller's import scan can't see
-a tkinter import hidden inside a string. From source it runs as
-``python -m app.filedialog``; frozen, as ``AlbumArtOverlay.exe --file-dialog``.
+(dashboard.api_browse) as ``python -m app.filedialog``. It used to be a
+``python -c`` string.
 
-The chosen path goes back through a file (``--out``), not stdout: a windowed
-build may have no stdout at all, and a pipe is decoded with the locale's code
-page, which can't carry every character a Windows path can.
+The chosen path goes back through a file (``--out``), not stdout: the
+installed app runs under pythonw, which has no stdout at all, and a pipe is
+decoded with the locale's code page, which can't carry every character a
+Windows path can.
 """
 
 import argparse

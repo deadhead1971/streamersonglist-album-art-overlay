@@ -179,7 +179,7 @@ def state(cfg: dict) -> dict:
         current=__version__,
         # The installed app offers the installer; a source run, whose update
         # is a git pull or a new zip, gets the release notes instead.
-        installed=config.FROZEN,
+        installed=config.INSTALLED,
         newer=newer,
         # Local ahead of remote (a dev machine mid-cycle) reads as no update,
         # which falls out of the > comparison above.

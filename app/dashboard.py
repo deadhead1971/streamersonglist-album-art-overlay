@@ -631,11 +631,9 @@ def _browse_start(kind: str, current: str, filetypes: str):
 
 
 def _file_dialog_command(args):
-    # Frozen, sys.executable is the app itself: desktop.main() sees the flag
-    # and runs only the dialog. From source it is Python, and the module is
-    # found relative to the repo, whatever the working directory is.
-    if config.FROZEN:
-        return [sys.executable, "--file-dialog", *args], None
+    # sys.executable is Python in every mode (the installed app is the bundled
+    # embeddable pythonw.exe). The cwd matters only from source; the installed
+    # Python finds the app package through its ._pth file.
     return [sys.executable, "-m", "app.filedialog", *args], str(config.RESOURCE_DIR)
 
 

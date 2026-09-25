@@ -5,16 +5,21 @@
 ; Overlay. The user's settings, library and log are NOT in here — they live in
 ; %LOCALAPPDATA%\AlbumArtOverlay (app/config.py DATA_DIR), which this installer
 ; never touches, so upgrading, reinstalling and uninstalling all keep them.
+;
+; What gets installed is the app's source plus python.org's embeddable Python
+; (see build.ps1 for why): the shortcuts run python\pythonw.exe -m app.desktop.
 
 #ifndef AppVersion
   #error Pass /DAppVersion=x.y.z (build.ps1 reads it from app\__init__.py)
 #endif
 #ifndef AppSourceDir
-  #error Pass /DAppSourceDir=<the PyInstaller output folder>
+  #error Pass /DAppSourceDir=<dist\AlbumArtOverlay, as build.ps1 assembles it>
 #endif
 
 #define AppName "Album Art Overlay"
-#define AppExe "AlbumArtOverlay.exe"
+; The launcher. pythonw has no console window; the tray icon is the app.
+#define AppRunner "{app}\python\pythonw.exe"
+#define AppArgs "-m app.desktop"
 #define RepoUrl "https://github.com/deadhead1971/streamersonglist-album-art-overlay"
 
 [Setup]
@@ -47,7 +52,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputBaseFilename=AlbumArtOverlay-Setup-{#AppVersion}
 SetupIconFile=icon.ico
-UninstallDisplayIcon={app}\{#AppExe}
+UninstallDisplayIcon={app}\icon.ico
 UninstallDisplayName={#AppName}
 WizardStyle=modern
 Compression=lzma2/max
@@ -57,20 +62,28 @@ SolidCompression=yes
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
 
 [InstallDelete]
-; A new version's bundle is not a superset of the old one; clear the old
-; libraries out rather than leave stale files beside the new ones.
-Type: filesandordirs; Name: "{app}\_internal"
+; A new version is not a superset of the old one; clear the old code out
+; rather than leave stale modules beside the new ones.
+Type: filesandordirs; Name: "{app}\python"
+Type: filesandordirs; Name: "{app}\app"
+Type: filesandordirs; Name: "{app}\obs"
 
 [Files]
 Source: "{#AppSourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 ; "for StreamerSonglist" so a Start-menu search for either word finds it.
-Name: "{autoprograms}\{#AppName} for StreamerSonglist"; Filename: "{app}\{#AppExe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName} for StreamerSonglist"; Filename: "{#AppRunner}"; Parameters: "{#AppArgs}"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; Comment: "Album art and queue overlays for OBS"
+Name: "{autodesktop}\{#AppName}"; Filename: "{#AppRunner}"; Parameters: "{#AppArgs}"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{#AppRunner}"; Parameters: "{#AppArgs}"; WorkingDir: "{app}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+; Anything Python compiled at run time is not in the install log. The build
+; precompiles everything, so this is a backstop; the data folder is untouched.
+Type: filesandordirs; Name: "{app}\python"
+Type: filesandordirs; Name: "{app}\app"
 
 [Code]
 const

@@ -1,10 +1,11 @@
 """
 Write THIRD-PARTY-NOTICES.txt for the Windows build from the licence files the
-bundled packages actually ship — run inside the build venv (build.ps1 does).
+bundled packages actually ship. build.ps1 runs it with the bundled Python
+itself, so it describes exactly what is installed there.
 
-Covers Python itself, Tcl/Tk (tkinter's runtime), PyInstaller's bootloader,
-and every distribution reachable from the app's direct dependencies. Generated
-rather than hand-written so it can't drift from what is really in the bundle.
+Covers Python itself, Tcl/Tk (tkinter's runtime), and every distribution
+reachable from the app's direct dependencies. Generated rather than
+hand-written so it can't drift from what is really in the bundle.
 """
 import re
 import sys
@@ -13,9 +14,8 @@ from pathlib import Path
 
 # What the app imports directly; everything they require is walked from here.
 ROOTS = ("Flask", "requests", "Pillow", "centrifuge-python", "pystray")
-# Build tools: bundled only as PyInstaller's bootloader, listed separately.
-BUILD_ONLY = {"pyinstaller", "pyinstaller-hooks-contrib", "altgraph", "pefile",
-              "packaging", "pywin32-ctypes", "pip", "setuptools"}
+# Never shipped, even if present where this runs.
+BUILD_ONLY = {"pip", "setuptools", "wheel"}
 LICENSE_NAME = re.compile(r"(^|/)(LICEN[CS]E|COPYING|NOTICE|AUTHORS)[^/]*$", re.I)
 RULE = "=" * 78
 
@@ -92,13 +92,6 @@ def main(out_path):
                                 meta.get_all("Classifier") or () if c.startswith("License"))
         parts.append(section(f"{meta['Name']} {dist.version}", licence,
                              licence_texts(dist)))
-
-    pyi = metadata.distribution("pyinstaller")
-    parts.append(section(
-        f"PyInstaller {pyi.version} (bootloader only)",
-        "GPL-2.0-or-later with the PyInstaller bootloader exception, which "
-        "permits distributing the bootloader with programs under any licence",
-        licence_texts(pyi)))
 
     Path(out_path).write_text("\n".join(parts), encoding="utf-8")
     print(f"wrote {out_path}")

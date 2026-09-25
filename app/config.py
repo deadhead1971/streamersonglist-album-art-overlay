@@ -12,30 +12,25 @@ All the hardcoded constants from the v2 script live here as config values.
 import json
 import os
 import shutil
-import sys
 from pathlib import Path
 
 from . import __version__, fileio
 
-# Two roots, because a packaged build separates them. RESOURCE_DIR holds what
+# Two roots, because an installed copy separates them. RESOURCE_DIR holds what
 # ships with the app and is only ever read (config.example.json, the OBS
 # loaders); DATA_DIR holds everything the app writes. From source both are the
-# repo root, exactly as before. Frozen (PyInstaller), the resources sit inside
-# the program folder, which an upgrade replaces wholesale — user data written
-# there would be wiped by the next install — so data goes to LOCALAPPDATA:
-# per-user, no admin rights, never synced by OneDrive (the output PNG is
-# rewritten on every song change), and not guarded by Controlled Folder Access.
-FROZEN = bool(getattr(sys, "frozen", False))
-
+# repo root, exactly as before. Installed, the resources sit in the program
+# folder, which an upgrade replaces wholesale — user data written there would
+# be wiped by the next install — so data goes to LOCALAPPDATA: per-user, no
+# admin rights, never synced by OneDrive (the output PNG is rewritten on every
+# song change), and not guarded by Controlled Folder Access.
+#
+# The installed app is plain source run by a bundled python.org embeddable
+# Python (packaging/build.ps1), so it can't be told apart from a source run by
+# the interpreter; the build drops this marker file into the program folder.
 APP_DIR_NAME = "AlbumArtOverlay"
-
-
-def _resource_dir() -> Path:
-    if FROZEN:
-        # PyInstaller's unpacked bundle (the _internal folder in one-folder
-        # mode); __file__ would point there too, but only by accident.
-        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
-    return Path(__file__).resolve().parent.parent
+RESOURCE_DIR = Path(__file__).resolve().parent.parent
+INSTALLED = (RESOURCE_DIR / "installed.txt").is_file()
 
 
 def _data_dir() -> Path:
@@ -44,13 +39,12 @@ def _data_dir() -> Path:
     override = os.environ.get("ALBUMART_DATA_DIR", "").strip()
     if override:
         return Path(override).expanduser().resolve()
-    if FROZEN:
+    if INSTALLED:
         base = os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local"
         return Path(base) / APP_DIR_NAME
-    return _resource_dir()
+    return RESOURCE_DIR
 
 
-RESOURCE_DIR = _resource_dir()
 DATA_DIR = _data_dir()
 # True for an installed copy (or a source run with ALBUMART_DATA_DIR set): the
 # data folder is not where the app's own files live, so the OBS loaders are

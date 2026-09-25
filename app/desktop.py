@@ -1,9 +1,10 @@
 """
 The desktop launcher: the app as a system-tray program, with no console window.
 
-This is what the packaged build runs (packaging/entry.py), and it runs from
-source too — ``python -m app.desktop``, or ``pythonw -m app.desktop`` for the
-real no-console experience — so the tray can be tried without building.
+The installed app's shortcut runs exactly this, with the bundled embeddable
+Python: ``python\pythonw.exe -m app.desktop`` (packaging/build.ps1). From
+source it is ``python -m app.desktop``, or ``pythonw -m app.desktop`` for the
+real no-console experience, so the tray can be tried without building.
 ``python -m app.dashboard`` is unchanged and still the developer's console run.
 
 Why a tray and not a console: a black window is exactly what a non-technical
@@ -13,8 +14,6 @@ writing to it — the runtime logs each song change before it writes the PNG, so
 one click froze the artwork.
 
 Flags:
-  --file-dialog ...  run only the Browse… dialog (app/filedialog.py) and exit;
-                     how a frozen build, which has no ``-m``, reaches it
   --background       don't open the browser (for start-at-login, later)
   --no-tray          serve without a tray icon (CI, smoke tests)
   --self-check       check that bundled optional pieces actually import
@@ -58,14 +57,17 @@ def _parse(argv):
 
 def self_check() -> int:
     """
-    Import everything a bundle can lose without anything failing loudly, and
-    report. Exit status is the number of failures, so CI fails on any.
+    Import everything an installed copy can be missing without anything
+    failing loudly, and report. Exit status is the number of failures, so the
+    build fails on any.
 
     Each of these degrades silently when missing: events.py swallows the
     centrifuge ImportError by design (instant updates quietly become polling);
-    websockets resolves ``connect`` lazily, invisible to PyInstaller's import
-    scan; tkinter is only used by the Browse… child process; WebP is a Pillow
-    plugin the thumbnails need; certifi's CA file is a data file, not code.
+    websockets resolves ``connect`` lazily, so a broken install only shows on
+    the first connect; tkinter is not part of the embeddable Python at all
+    and is added by the build, and only the Browse… child process uses it;
+    WebP is a Pillow plugin the thumbnails need; certifi's CA file is a data
+    file, not code.
     """
     results = []
 
@@ -91,6 +93,14 @@ def self_check() -> int:
     def tk():
         import tkinter
         import tkinter.filedialog  # noqa: F401
+        # Importing proves only the .pyd; a dialog also needs the Tcl and Tk
+        # script libraries on disk. Tcl() fails without init.tcl, and no
+        # window is created for either check.
+        from pathlib import Path
+        library = Path(tkinter.Tcl().eval("info library"))
+        tk_script = library.parent / f"tk{tkinter.TkVersion}" / "tk.tcl"
+        if not tk_script.is_file():
+            raise FileNotFoundError(tk_script)
         return f"Tk {tkinter.TkVersion}"
 
     def webp():
@@ -234,14 +244,7 @@ def run_tray(base_url: str, on_quit, first_run: bool, stoppers: list) -> bool:
 # ---------------------------------------------------------------------------
 
 def main(argv=None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-
-    # Before anything else loads: this process exists only to show a dialog.
-    if argv[:1] == ["--file-dialog"]:
-        from . import filedialog
-        return filedialog.main(argv[1:])
-
-    args = _parse(argv)
+    args = _parse(list(sys.argv[1:] if argv is None else argv))
     # Must be set before app.config is imported — its paths are module-level.
     if args.data_dir:
         os.environ["ALBUMART_DATA_DIR"] = args.data_dir

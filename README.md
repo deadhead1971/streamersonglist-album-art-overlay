@@ -179,7 +179,8 @@ system tray**: closing the browser tab doesn't stop it, and your overlays keep
 working. Click the tray icon to open the dashboard again, or start the app from
 the Start menu again, which just reopens the dashboard. To stop it, right-click
 the tray icon and choose **Quit** (or use **Quit app** at the bottom of
-Settings). From source, keep the `run_dashboard.bat` window open instead.
+Settings). In Task Manager it shows up as **pythonw.exe**, because the app
+runs on its own private copy of Python. From source, keep the `run_dashboard.bat` window open instead.
 
 It runs
 a built-in live service that watches your StreamerSonglist queue and, whenever
