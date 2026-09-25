@@ -6,13 +6,16 @@
 #   which ignores drafts, so no user hears of a version whose installer isn't
 #   there yet. Don't create releases by hand; one would collide with this draft.
 #
-#   Run it manually (Actions -> Windows build -> Run workflow) for a test build:
-#   the installer is attached to the run as an artifact and no release is made.
+#   Push to the test branch, or run it manually (Actions -> Windows build ->
+#   Run workflow; GitHub only offers that once this file is on main), for a
+#   test build: the installer is attached to the run as an artifact and no
+#   release is made.
 name: Windows build
 
 on:
   push:
     tags: ["v*"]
+    branches: [test]
   workflow_dispatch:
 
 permissions:
