@@ -241,9 +241,27 @@
 
     <button type="submit" class="primary">Save settings</button>
   </form>
+  {% if can_quit %}
+  <p class="muted small" style="margin-top:1.5em">
+    Album Art Overlay keeps running in the system tray when you close this tab,
+    so your overlays stay live.
+    <button type="button" class="secondary" id="quit-app">Quit app</button>
+  </p>
+  {% endif %}
 </div>
 
 <script>
+{% if can_quit %}
+document.getElementById('quit-app').addEventListener('click', async () => {
+  if (!confirm('Quit Album Art Overlay? Your OBS overlays stop updating until you start it again.')) return;
+  try {
+    await fetch('{{ url_for("api_quit") }}', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: '{}'});
+    document.body.innerHTML = '<main><h1>Album Art Overlay has quit</h1>' +
+      '<p>Start it again from the Start menu or your desktop.</p></main>';
+  } catch (e) { alert('Could not reach the app: ' + e); }
+});
+{% endif %}
 function updateSongFileVisibility() {
   const fileSelected = document.querySelector('[name=song_source][value=file]').checked;
   document.getElementById('song-file-row').style.display = fileSelected ? '' : 'none';

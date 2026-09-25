@@ -357,7 +357,27 @@ def settings_page():
                            token_type=songlist.normalize_token_type(
                                cfg.get("api_token_type")),
                            update=updates.state(cfg),
+                           can_quit=request_quit is not None,
                            needs_setup=not cfg.get("streamersonglist_username"))
+
+
+# Set by the desktop launcher (app/desktop.py) to stop the app from a request.
+# None under `python -m app.dashboard`, whose console window is how it quits.
+request_quit = None
+
+
+@app.route("/api/quit", methods=["POST"])
+def api_quit():
+    """
+    Quit the tray app — for when its icon is hidden or failed to start.
+    JSON only: a cross-site page can't send a JSON POST without a CORS
+    preflight, which this never answers, so no other website can stop it.
+    """
+    if not request.is_json or request_quit is None:
+        return jsonify({"ok": False, "error": "not available"}), 400
+    # After this response goes out, not before: shutdown stops the server.
+    threading.Timer(0.3, request_quit).start()
+    return jsonify({"ok": True})
 
 
 def _verify_saved_credential(cfg: dict, previous_token: str) -> dict:
