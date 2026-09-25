@@ -50,10 +50,14 @@ Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
 
 1. Open the [latest release](https://github.com/deadhead1971/streamersonglist-album-art-overlay/releases/latest)
    and download **`AlbumArtOverlay-Setup-x.y.z.exe`**.
-2. Your browser may say the file **isn't commonly downloaded**. Choose **Keep**
-   (in Edge it's under the **…** menu next to the download).
+2. Your browser may say the file **isn't commonly downloaded**. In Edge it
+   takes two steps, and both hide the option you want:
+   - Open the **…** menu next to the download and choose **Keep**.
+   - Edge asks again. **Don't click the big Delete button**: click the small
+     **˅ arrow beside it** and choose **Keep anyway**.
 
    <img src="docs/screenshots/edge-keep-download.png" alt="Edge: the file isn't commonly downloaded. Open the … menu and choose Keep" width="420">
+   <img src="docs/screenshots/edge-keep-anyway.png" alt="Edge asks again: click the arrow beside Delete, then Keep anyway" width="300">
 
 3. Run it. Windows may show **"Windows protected your PC"**. There's no Run
    button at first: click **More info**, then **Run anyway**.
