@@ -1,8 +1,8 @@
 """
 Update check against the project's GitHub Releases.
 
-Users install this by cloning or downloading a zip, so nothing tells them a new
-version exists unless they go and look. This asks GitHub's release API once per
+Nothing tells a user a new version exists unless they go and look, whether
+they run from source or the installed Windows app. This asks GitHub's release API once per
 dashboard launch, in a background thread, and the dashboard shows a banner if
 the latest release is newer than ``__version__``.
 
@@ -45,6 +45,9 @@ _STATE = {
     "latest": "",       # canonicalised release tag, e.g. "v1.4.0"
     "name": "",         # release title
     "url": RELEASE_PAGE,
+    # The release's installer (an asset named *-Setup-*.exe), for the
+    # installed app's "Download update" button. Blank if it has none.
+    "download_url": "",
     "published_at": "",
     "error": "",
 }
@@ -115,9 +118,19 @@ def check() -> dict:
         latest=latest,
         name=_headline(str(data.get("name") or ""), tag, latest),
         url=str(data.get("html_url") or RELEASE_PAGE),
+        download_url=_installer_url(data.get("assets")),
         published_at=str(data.get("published_at") or ""),
         error="",
     )
+
+
+def _installer_url(assets) -> str:
+    """The download link of the release's Windows installer, if it has one."""
+    for asset in assets if isinstance(assets, list) else ():
+        name = str((asset or {}).get("name") or "")
+        if "-Setup-" in name and name.lower().endswith(".exe"):
+            return str(asset.get("browser_download_url") or "")
+    return ""
 
 
 def _headline(name: str, *tags: str) -> str:
@@ -164,6 +177,9 @@ def state(cfg: dict) -> dict:
     skipped = (cfg.get("updates", {}).get("skipped_version") or "").strip()
     snapshot.update(
         current=__version__,
+        # The installed app offers the installer; a source run, whose update
+        # is a git pull or a new zip, gets the release notes instead.
+        installed=config.FROZEN,
         newer=newer,
         # Local ahead of remote (a dev machine mid-cycle) reads as no update,
         # which falls out of the > comparison above.

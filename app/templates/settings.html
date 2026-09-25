@@ -141,9 +141,15 @@
       <label class="checkbox">
         <input type="checkbox" name="runtime_service"
                {{ 'checked' if cfg.runtime_service }}>
+        {% if desktop_app -%}
+        Run the live service — updates the output image and the overlays while
+        the app is running. Leave this on. The app lives in the system tray,
+        and closing this tab doesn't stop your overlays.
+        {%- else -%}
         Run the live service — updates the output image and the overlays while
         the dashboard is open. Leave this on; keep the dashboard running while
         you stream.
+        {%- endif %}
       </label>
     </fieldset>
 
@@ -204,6 +210,26 @@
     </fieldset>
 
     <fieldset>
+      <legend>Your files</legend>
+      <div class="muted small">
+        Everything the app keeps: your settings, artwork library and log. Back
+        up the data folder to keep your artwork choices; send the log with a
+        bug report.
+      </div>
+      {% for f in your_files %}
+      <label>{{ f.label }}
+        <span class="path-row">
+          <input type="text" id="file-{{ f.name }}" readonly value="{{ f.path }}"
+                 onclick="this.select()">
+          <button type="button" class="secondary open-folder-btn"
+                  data-name="{{ f.name }}">Open</button>
+          <button type="button" class="secondary copy-btn"
+                  data-copy="file-{{ f.name }}">Copy</button>
+        </span></label>
+      {% endfor %}
+    </fieldset>
+
+    <fieldset>
       <legend>Updates</legend>
       <div class="row">
         <span>You are running <strong>v{{ update.current }}</strong></span>
@@ -214,6 +240,9 @@
               below explains why no banner is showing. -#}
           {%- if update.newer %}
           <span class="warn">{{ update.latest }} is available</span> —
+          {%- if update.installed and update.download_url %}
+          <a href="{{ update.download_url }}">download update</a> ·
+          {%- endif %}
           <a href="{{ update.url }}" target="_blank" rel="noopener">what's new ↗</a>
           {%- elif update.checked and not update.error %}Up to date
           {%- endif %}
@@ -320,6 +349,8 @@ document.getElementById('update-btn').addEventListener('click', async (ev) => {
       el.className = 'err';
     } else if (d.newer) {
       el.innerHTML = `<span class="warn">${d.latest} is available</span> — `
+        + (d.installed && d.download_url
+           ? `<a href="${d.download_url}">download update</a> · ` : '')
         + `<a href="${d.url}" target="_blank" rel="noopener">what's new ↗</a>`;
       el.className = '';
     } else {
@@ -328,6 +359,18 @@ document.getElementById('update-btn').addEventListener('click', async (ev) => {
     }
   } catch (e) { el.textContent = '❌ ' + e; el.className = 'err'; }
   ev.target.disabled = false;
+});
+
+document.querySelectorAll('.open-folder-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    try {
+      const d = await (await fetch('{{ url_for("api_open_folder") }}', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: btn.dataset.name})
+      })).json();
+      if (!d.ok) alert(d.error || 'Could not open the folder');
+    } catch (e) { alert('Could not reach the app: ' + e); }
+  });
 });
 
 const unskip = document.getElementById('update-unskip');

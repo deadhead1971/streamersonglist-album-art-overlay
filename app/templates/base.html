@@ -117,6 +117,8 @@
         <strong><span id="update-latest"></span> available</strong><span id="update-name"></span>
         <div class="small">
           You're on v{{ app_version }} ·
+          <span id="update-download" hidden><a id="update-download-link" href="#">Download update</a>
+            (your library and settings are kept) · </span>
           <a id="update-link" href="#" target="_blank" rel="noopener">What's new ↗</a>
         </div>
       </div>
@@ -136,6 +138,10 @@
       document.getElementById('update-latest').textContent = d.latest;
       document.getElementById('update-name').textContent = d.name ? ` — ${d.name}` : '';
       document.getElementById('update-link').href = d.url;
+      if (d.installed && d.download_url) {
+        document.getElementById('update-download-link').href = d.download_url;
+        document.getElementById('update-download').hidden = false;
+      }
       const banner = document.getElementById('update-banner');
       banner.hidden = false;
       document.getElementById('update-dismiss').addEventListener('click', async () => {

@@ -41,8 +41,14 @@ app = Flask(__name__)
 
 @app.context_processor
 def inject_version():
-    """Every page footer/banner can show which version is running."""
-    return {"app_version": __version__}
+    """
+    Every page footer/banner can show which version is running, and whether
+    this is the tray app (app/desktop.py sets request_quit) — its pages say
+    "closing this tab doesn't stop your overlays" where a console run's say
+    "keep the dashboard running".
+    """
+    return {"app_version": __version__,
+            "desktop_app": request_quit is not None}
 
 
 @app.errorhandler(library.ManifestUnreadable)
@@ -358,12 +364,55 @@ def settings_page():
                                cfg.get("api_token_type")),
                            update=updates.state(cfg),
                            can_quit=request_quit is not None,
+                           your_files=[{"name": name, "label": label,
+                                        "path": str(path)}
+                                       for name, (label, path) in _FOLDERS.items()],
                            needs_setup=not cfg.get("streamersonglist_username"))
 
 
 # Set by the desktop launcher (app/desktop.py) to stop the app from a request.
 # None under `python -m app.dashboard`, whose console window is how it quits.
 request_quit = None
+
+
+# The folders /api/open-folder may open, by name. A fixed list, never a path
+# from the request: the endpoint launches Explorer on whatever it is given.
+_FOLDERS = {
+    "data": ("Data folder", config.DATA_DIR),
+    "library": ("Artwork library", config.LIBRARY_DIR),
+    "log": ("Log file", config.LOG_FILE),
+}
+
+
+@app.route("/api/open-folder", methods=["POST"])
+def api_open_folder():
+    """
+    Show one of _FOLDERS in Explorer (the data folder is hidden under AppData,
+    so this is how a user finds it). JSON only, like /api/quit, so no other
+    website can make it open windows. The log opens its folder with the file
+    selected.
+    """
+    if not request.is_json:
+        return jsonify({"ok": False, "error": "JSON only"}), 400
+    entry = _FOLDERS.get(str((request.json or {}).get("name", "")))
+    if entry is None:
+        return jsonify({"ok": False, "error": "unknown folder"}), 400
+    path = entry[1]
+    try:
+        if path == config.LOG_FILE:
+            # Decided by name, never by is_file(): before the first log line
+            # the file doesn't exist yet, and the folder branch's mkdir would
+            # make a *directory* called artwork_fetcher.log, breaking logging.
+            if path.is_file():
+                subprocess.Popen(["explorer", "/select,", str(path)])
+            else:
+                os.startfile(str(path.parent))  # noqa: S606 — a fixed folder
+        else:
+            path.mkdir(parents=True, exist_ok=True)
+            os.startfile(str(path))  # noqa: S606 — a fixed folder
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True})
 
 
 @app.route("/api/quit", methods=["POST"])
