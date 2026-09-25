@@ -1,0 +1,29 @@
+# Exact pins for the Windows build (packaging/build.ps1). The app's own ranges
+# are in requirements.txt; bump these deliberately and rebuild, so a release
+# never picks up a new dependency version nobody has run.
+# Refresh: build in a clean venv from requirements.txt + pyinstaller + pystray,
+# run the pre-release checks, then pip freeze into this file.
+altgraph==0.17.5
+blinker==1.9.0
+centrifuge-python==0.6.0
+certifi==2026.7.22
+charset-normalizer==3.5.1
+click==8.5.0
+Flask==3.1.3
+idna==3.20
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+packaging==26.3
+pefile==2024.8.26
+pillow==12.3.0
+protobuf==7.36.2
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.7
+pystray==0.19.5
+pywin32-ctypes==0.2.3
+requests==2.34.2
+six==1.17.0
+urllib3==2.8.0
+websockets==16.1.1
+Werkzeug==3.1.8

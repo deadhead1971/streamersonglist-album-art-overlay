@@ -162,8 +162,8 @@ def _tray_image():
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     draw.ellipse((2, 2, size - 3, size - 3), fill=(24, 24, 28, 255),
-                 outline=(77, 163, 255, 255), width=3)
-    draw.ellipse((22, 22, size - 23, size - 23), fill=(77, 163, 255, 255))
+                 outline=(91, 140, 255, 255), width=3)
+    draw.ellipse((22, 22, size - 23, size - 23), fill=(91, 140, 255, 255))
     draw.ellipse((29, 29, size - 30, size - 30), fill=(24, 24, 28, 255))
     return img
 

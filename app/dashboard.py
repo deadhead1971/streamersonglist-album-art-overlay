@@ -835,6 +835,16 @@ def api_propose_stop():
     return jsonify({"ok": True})
 
 
+@app.route("/favicon.ico")
+def favicon():
+    """The app icon (packaging/icon.ico from source, bundled at the root)."""
+    for path in (config.RESOURCE_DIR / "icon.ico",
+                 config.RESOURCE_DIR / "packaging" / "icon.ico"):
+        if path.is_file():
+            return send_file(path, mimetype="image/x-icon", max_age=86400)
+    return "", 404
+
+
 @app.route("/img")
 def serve_image():
     lib = Library()
