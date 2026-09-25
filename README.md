@@ -52,8 +52,10 @@ Artwork comes from the **iTunes Search API** first, then optionally **Last.fm**
    and download **`AlbumArtOverlay-Setup-x.y.z.exe`**.
 2. Your browser may say the file **isn't commonly downloaded**. Choose **Keep**
    (in Edge it's under the **…** menu next to the download).
-3. Run it. Windows may show **"Windows protected your PC"**. Click **More
-   info**, then **Run anyway**.
+3. Run it. Windows may show **"Windows protected your PC"**. There's no Run
+   button at first: click **More info**, then **Run anyway**.
+
+   <img src="docs/screenshots/smartscreen-warning.png" alt="Windows protected your PC: click More info, then Run anyway" width="400">
 
    Why the warnings? The app isn't code-signed yet, so Windows doesn't know
    the publisher, and every new version starts out unknown to it. The source
