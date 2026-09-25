@@ -22,3 +22,7 @@ env/
 PLAN.md
 MIGRATION.md
 PACKAGING_PLAN.md
+
+# PyInstaller / installer output (packaging/build.ps1)
+/build/
+/dist/
