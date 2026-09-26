@@ -410,8 +410,9 @@ author. The **[privacy policy](PRIVACY.md)** lists every online service it
 contacts (StreamerSonglist, the artwork searches, and GitHub's update check)
 and exactly what each is sent.
 
-Code signing for the Windows installer has been applied for; the
-**[code signing policy](CODE_SIGNING.md)** says what will be signed, and how.
+Code signing has been applied for, for the Windows installer (the new,
+no-Python way to install the app); the **[code signing policy](CODE_SIGNING.md)**
+says what will be signed, and how.
 
 ## Files in this repo
 
