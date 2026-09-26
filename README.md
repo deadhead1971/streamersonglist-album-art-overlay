@@ -297,6 +297,17 @@ it off under **Settings → Updates** if you'd rather check
 [the releases page](https://github.com/deadhead1971/streamersonglist-album-art-overlay/releases)
 yourself, and use **Check now** on that same page any time.
 
+## Privacy and code signing
+
+The app has no accounts, analytics or telemetry, and sends nothing to the
+author. The **[privacy policy](PRIVACY.md)** lists every online service it
+contacts (StreamerSonglist, the artwork searches, and GitHub's update check)
+and exactly what each is sent.
+
+Code signing has been applied for, for the Windows installer (the new,
+no-Python way to install the app); the **[code signing policy](CODE_SIGNING.md)**
+says what will be signed, and how.
+
 ## Files in this repo
 
 | File | What it does |
