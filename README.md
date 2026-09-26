@@ -403,6 +403,16 @@ This removes the program but **keeps your data folder**, so a reinstall picks
 up where you left off. To remove everything, delete
 `%LOCALAPPDATA%\AlbumArtOverlay` afterwards too.
 
+## Privacy and code signing
+
+The app has no accounts, analytics or telemetry, and sends nothing to the
+author. The **[privacy policy](PRIVACY.md)** lists every online service it
+contacts (StreamerSonglist, the artwork searches, and GitHub's update check)
+and exactly what each is sent.
+
+Code signing for the Windows installer has been applied for; the
+**[code signing policy](CODE_SIGNING.md)** says what will be signed, and how.
+
 ## Files in this repo
 
 | File | What it does |
