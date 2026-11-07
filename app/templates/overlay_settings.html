@@ -17,8 +17,14 @@
     <em>Local file</em>, and point it at the loader below (suggested size:
     500 × 800, transparent background is automatic). The loader waits for the
     dashboard, so launch order doesn't matter.
+    {% if desktop_app -%}
+    <strong>Album Art Overlay must be running while you're live</strong> — it
+    serves the overlay and keeps the queue updated. It lives in the system
+    tray; closing the dashboard tab doesn't stop it.
+    {%- else -%}
     <strong>This dashboard must be running while you're live</strong> — it
     serves the overlay and keeps the queue updated.
+    {%- endif %}
     <div class="row" style="margin-top:.5em">
       <input type="text" id="queue-loader" readonly value="{{ queue_loader }}"
              style="flex:1" onclick="this.select()">
@@ -939,14 +945,5 @@
   });
 })();
 
-document.querySelectorAll('.copy-btn').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const input = document.getElementById(btn.dataset.copy);
-    input.select();
-    try { await navigator.clipboard.writeText(input.value); } catch (e) { document.execCommand('copy'); }
-    btn.textContent = 'Copied!';
-    setTimeout(() => btn.textContent = 'Copy URL', 1500);
-  });
-});
 </script>
 {% endblock %}

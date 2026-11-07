@@ -9,9 +9,11 @@ request handlers never block on it.
 import io
 import json
 import logging
+import os
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -24,8 +26,8 @@ from flask import (
 from PIL import Image
 
 from . import (
-    __version__, artwork, config, fileio, imaging, library, runtime, songlist,
-    sources, updates,
+    __version__, artwork, config, fileio, imaging, instance, library, runtime,
+    songlist, sources, updates,
 )
 from .library import (
     Library, STATUS_PROPOSED, STATUS_UNVERIFIED,
@@ -39,8 +41,14 @@ app = Flask(__name__)
 
 @app.context_processor
 def inject_version():
-    """Every page footer/banner can show which version is running."""
-    return {"app_version": __version__}
+    """
+    Every page footer/banner can show which version is running, and whether
+    this is the tray app (app/desktop.py sets request_quit) — its pages say
+    "closing this tab doesn't stop your overlays" where a console run's say
+    "keep the dashboard running".
+    """
+    return {"app_version": __version__,
+            "desktop_app": request_quit is not None}
 
 
 @app.errorhandler(library.ManifestUnreadable)
@@ -355,7 +363,70 @@ def settings_page():
                            token_type=songlist.normalize_token_type(
                                cfg.get("api_token_type")),
                            update=updates.state(cfg),
+                           can_quit=request_quit is not None,
+                           your_files=[{"name": name, "label": label,
+                                        "path": str(path)}
+                                       for name, (label, path) in _FOLDERS.items()],
                            needs_setup=not cfg.get("streamersonglist_username"))
+
+
+# Set by the desktop launcher (app/desktop.py) to stop the app from a request.
+# None under `python -m app.dashboard`, whose console window is how it quits.
+request_quit = None
+
+
+# The folders /api/open-folder may open, by name. A fixed list, never a path
+# from the request: the endpoint launches Explorer on whatever it is given.
+_FOLDERS = {
+    "data": ("Data folder", config.DATA_DIR),
+    "library": ("Artwork library", config.LIBRARY_DIR),
+    "log": ("Log file", config.LOG_FILE),
+}
+
+
+@app.route("/api/open-folder", methods=["POST"])
+def api_open_folder():
+    """
+    Show one of _FOLDERS in Explorer (the data folder is hidden under AppData,
+    so this is how a user finds it). JSON only, like /api/quit, so no other
+    website can make it open windows. The log opens its folder with the file
+    selected.
+    """
+    if not request.is_json:
+        return jsonify({"ok": False, "error": "JSON only"}), 400
+    entry = _FOLDERS.get(str((request.json or {}).get("name", "")))
+    if entry is None:
+        return jsonify({"ok": False, "error": "unknown folder"}), 400
+    path = entry[1]
+    try:
+        if path == config.LOG_FILE:
+            # Decided by name, never by is_file(): before the first log line
+            # the file doesn't exist yet, and the folder branch's mkdir would
+            # make a *directory* called artwork_fetcher.log, breaking logging.
+            if path.is_file():
+                subprocess.Popen(["explorer", "/select,", str(path)])
+            else:
+                os.startfile(str(path.parent))  # noqa: S606 — a fixed folder
+        else:
+            path.mkdir(parents=True, exist_ok=True)
+            os.startfile(str(path))  # noqa: S606 — a fixed folder
+    except OSError as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True})
+
+
+@app.route("/api/quit", methods=["POST"])
+def api_quit():
+    """
+    Quit the tray app — for when its icon is hidden or failed to start.
+    JSON only: a cross-site page can't send a JSON POST without a CORS
+    preflight, which this never answers, so no other website can stop it.
+    """
+    if not request.is_json or request_quit is None:
+        return jsonify({"ok": False, "error": "not available"}), 400
+    # After this response goes out, not before: shutdown stops the server.
+    threading.Timer(0.3, request_quit).start()
+    return jsonify({"ok": True})
 
 
 def _verify_saved_credential(cfg: dict, previous_token: str) -> dict:
@@ -524,44 +595,83 @@ def queue_page():
 # machine (Flask binds 127.0.0.1), so the server can pop a Windows file picker
 # and hand the chosen path back to the page. Tkinter must own the main thread
 # of its interpreter, which Flask request threads are not — so each dialog runs
-# in a short-lived subprocess. A lock stops double-clicks stacking dialogs.
+# in a short-lived child process (app/filedialog.py). A lock stops double-clicks
+# stacking dialogs.
 _BROWSE_LOCK = threading.Lock()
 
-_BROWSE_SCRIPT = """
-import sys, tkinter, tkinter.filedialog as fd
-root = tkinter.Tk(); root.withdraw(); root.attributes("-topmost", True)
-kind, initial, filetypes = sys.argv[1], sys.argv[2], sys.argv[3]
-types = [tuple(t.split(":", 1)) for t in filetypes.split(";")] if filetypes else []
-opts = {"parent": root, "initialfile": initial, "filetypes": types or [("All files", "*.*")]}
-if kind == "save":
-    path = fd.asksaveasfilename(defaultextension=".png", **opts)
-else:
-    path = fd.askopenfilename(**opts)
-print(path or "")
-"""
+_IMAGE_PATTERNS = ("*.png", "*.jpg", "*.jpeg")
+
+
+def _pictures_dir():
+    """The user's Pictures folder, where OneDrive may have moved it, or None."""
+    home = Path.home()
+    for candidate in (home / "Pictures", home / "OneDrive" / "Pictures"):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _browse_start(kind: str, current: str, filetypes: str):
+    """
+    (initialdir, initialfile) for a dialog: the folder of whatever the field
+    already holds, else the data folder for a file being saved (the output
+    PNG), else Pictures for an image being opened. Anything else is left to
+    the dialog's own default.
+    """
+    if current:
+        path = Path(current)
+        if path.parent.is_dir() and str(path.parent) not in ("", "."):
+            return str(path.parent), path.name
+    if kind == "save":
+        return str(config.DATA_DIR), ""
+    if any(p in filetypes.lower() for p in _IMAGE_PATTERNS):
+        pictures = _pictures_dir()
+        return (str(pictures) if pictures else ""), ""
+    return "", ""
+
+
+def _file_dialog_command(args):
+    # sys.executable is Python in every mode (the installed app is the bundled
+    # embeddable pythonw.exe). The cwd matters only from source; the installed
+    # Python finds the app package through its ._pth file.
+    return [sys.executable, "-m", "app.filedialog", *args], str(config.RESOURCE_DIR)
 
 
 @app.route("/api/browse", methods=["POST"])
 def api_browse():
     data = request.json or {}
     kind = "save" if data.get("kind") == "save" else "open"
-    initial = str(data.get("initialfile", ""))
     filetypes = str(data.get("filetypes", ""))
+    initialdir, initialfile = _browse_start(
+        kind, str(data.get("current", "")).strip(), filetypes)
+    initialfile = initialfile or str(data.get("initialfile", ""))
     if not _BROWSE_LOCK.acquire(blocking=False):
         return jsonify({"ok": False, "error": "A file dialog is already open"}), 409
+    handle, out_path = tempfile.mkstemp(prefix="albumart-browse-", suffix=".txt")
+    os.close(handle)
+    out = Path(out_path)
+    out.unlink()  # the dialog creates it on answering; absent = it never did
     try:
-        result = subprocess.run(
-            [sys.executable, "-c", _BROWSE_SCRIPT, kind, initial, filetypes],
-            capture_output=True, text=True, timeout=300,
-        )
-        path = result.stdout.strip()
-        if result.returncode != 0:
+        cmd, cwd = _file_dialog_command([
+            "--kind", kind, "--initialfile", initialfile,
+            "--initialdir", initialdir, "--filetypes", filetypes,
+            "--out", str(out),
+        ])
+        result = subprocess.run(cmd, cwd=cwd, capture_output=True, timeout=300)
+        if result.returncode != 0 or not out.exists():
+            log.error("File dialog failed (exit %s): %s", result.returncode,
+                      result.stderr.decode("utf-8", "replace").strip()[-500:])
             return jsonify({"ok": False, "error": "File dialog failed"}), 500
-        return jsonify({"ok": True, "path": path})
+        return jsonify({"ok": True,
+                        "path": out.read_text(encoding="utf-8").strip()})
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": "File dialog timed out"}), 500
     finally:
         _BROWSE_LOCK.release()
+        try:
+            out.unlink()
+        except OSError:
+            pass
 
 
 @app.route("/api/test-connection", methods=["POST"])
@@ -770,6 +880,16 @@ def api_propose_status():
 def api_propose_stop():
     propose_job.stop()
     return jsonify({"ok": True})
+
+
+@app.route("/favicon.ico")
+def favicon():
+    """The app icon (packaging/icon.ico from source, bundled at the root)."""
+    for path in (config.RESOURCE_DIR / "icon.ico",
+                 config.RESOURCE_DIR / "packaging" / "icon.ico"):
+        if path.is_file():
+            return send_file(path, mimetype="image/x-icon", max_age=86400)
+    return "", 404
 
 
 @app.route("/img")
@@ -1371,7 +1491,7 @@ def overlay_settings_page():
     cur_opts = overlay_current_options(cfg, {})
     overlay_url = url_for("overlay_queue_page", _external=True)
     current_url = url_for("overlay_current_page", _external=True)
-    loader_dir = Path(__file__).resolve().parent.parent / "obs"
+    loader_dir = config.OBS_DIR
 
     # The wall's tile count drives the headroom advice in its panel. Hashing the
     # library the first time costs a second or so; it is memoised per file after
@@ -1574,28 +1694,66 @@ def _port_owner(host: str, port: int):
     return "other"
 
 
-def run(host="127.0.0.1", port=5050, open_browser=True):
+def wait_for_dashboard(host: str, port: int, timeout: float = 10.0):
+    """
+    For a launch that found another copy holding the instance lock: that copy
+    may still be starting, so give it a few seconds to answer before saying
+    anything. Returns _port_owner's verdict, None if nothing answered in time.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        owner = _port_owner(host, port)
+        if owner is not None or time.monotonic() >= deadline:
+            return owner
+        time.sleep(0.25)
+
+
+def sync_obs_loaders():
+    """
+    Copy the bundled OBS loaders into the data folder, for an installed copy.
+
+    OBS stores a local-file browser source as an absolute path, so the loaders
+    must live somewhere that survives an upgrade, a reinstall to another
+    folder, and uninstalling — the data folder, not the program folder.
+    Rewritten only when the bytes differ, so a new version's loader fixes
+    arrive without touching the file on every launch. From source they are
+    served straight from the repo's obs/ and this does nothing.
+    """
+    if not config.SEPARATE_DATA_DIR:
+        return
+    try:
+        config.OBS_DIR.mkdir(parents=True, exist_ok=True)
+        for src in sorted(config.BUNDLED_OBS_DIR.glob("*.html")):
+            data = src.read_bytes()
+            dest = config.OBS_DIR / src.name
+            try:
+                if dest.read_bytes() == data:
+                    continue
+            except OSError:
+                pass
+            fileio.write_atomic(dest, data)
+            log.info("Updated OBS loader %s", dest)
+    except OSError as e:
+        # Not fatal: any loader already there still works, since they only
+        # point at 127.0.0.1:5050.
+        log.error("Could not update the OBS loaders in %s: %s", config.OBS_DIR, e)
+
+
+def prepare() -> bool:
+    """
+    Everything a launch does before serving: logging, config, loaders, the
+    manifest check, the update check and the runtime service. Shared by run()
+    and the desktop launcher (app/desktop.py). The caller must already hold
+    the instance lock and have checked the port — a second runtime service
+    would poll SSL and fight the first one for the output PNG.
+
+    Returns True on the first run (a fresh config.json was just created).
+    """
     artwork.setup_logging()
-
-    # Before the runtime service starts — a second service would poll SSL and
-    # fight the first one for the output PNG.
-    owner = _port_owner(host, port)
-    if owner is not None:
-        url = f"http://{host}:{port}/"
-        if owner == "dashboard":
-            message = (f"The dashboard is already running at {url}\n"
-                       f"Open that, or close the other window first if you "
-                       f"meant to restart it.")
-        else:
-            message = (f"Port {port} is already in use by another program, so "
-                       f"the dashboard can't start.")
-        message += (f"\nTo find what is holding the port:  "
-                    f"netstat -ano | findstr :{port}")
-        log.error("Refusing to start: %s", message.replace("\n", " "))
-        print(f"\n{message}\n")
-        raise SystemExit(1)
-
     first_run = config.ensure_config()
+    if first_run:
+        log.info("First run: created %s", config.CONFIG_PATH)
+    sync_obs_loaders()
     # Load the manifest before anything can write to it, so a damaged one is
     # restored from its backup (or reported) now rather than mid-stream.
     try:
@@ -1606,6 +1764,39 @@ def run(host="127.0.0.1", port=5050, open_browser=True):
     updates.start_background_check(cfg)
     if _runtime_wanted(cfg):
         runtime.service.start(cfg)
+    return first_run
+
+
+def run(host="127.0.0.1", port=5050, open_browser=True):
+    artwork.setup_logging()
+
+    # The lock first: the port check alone lets two launches a second apart
+    # both see a free port (see app/instance.py).
+    if instance.acquire():
+        owner = _port_owner(host, port)
+    else:
+        owner = wait_for_dashboard(host, port) or "starting"
+    if owner is not None:
+        url = f"http://{host}:{port}/"
+        if owner == "dashboard":
+            message = (f"The dashboard is already running at {url}\n"
+                       f"Open that, or close the other window first if you "
+                       f"meant to restart it.")
+        elif owner == "starting":
+            message = ("Another copy of the dashboard is running but isn't "
+                       f"answering at {url} yet. Wait a moment and open that, "
+                       "or close the other copy first.")
+        else:
+            message = (f"Port {port} is already in use by another program, so "
+                       f"the dashboard can't start.")
+        if owner != "starting":
+            message += (f"\nTo find what is holding the port:  "
+                        f"netstat -ano | findstr :{port}")
+        log.error("Refusing to start: %s", message.replace("\n", " "))
+        print(f"\n{message}\n")
+        raise SystemExit(1)
+
+    first_run = prepare()
     if open_browser:
         target = "settings" if first_run else ""
         threading.Timer(
