@@ -61,6 +61,7 @@ let queue = [];
 let pos = 0;
 let current = null;
 let busy = false;
+let confirmed = 0;
 
 const STATUS_LABEL = {
   confirmed: '✅ confirmed', proposed: '🟡 needs review',
@@ -95,14 +96,19 @@ function showEmpty() {
   $('card').hidden = true;
   $('empty').hidden = false;
   $('progress-count').textContent = '';
-  $('empty').innerHTML = SINGLE_KEY
-    ? '<p>Done. ✓</p><p class="muted"><a href="{{ url_for("songs_page") }}">← Back to the song list</a></p>'
-    : '<p>Nothing to review here. 🎉</p><p class="muted">Sync your songlist and run '
-      + '<strong>Find artwork</strong> on the Songs page.</p>';
+}
+
+// The end of a review goes back to the song list, which reports what happened.
+// replace, not assign: Back from the list shouldn't land on a finished review.
+function finish() {
+  const list = '{{ url_for("songs_page") }}';
+  if (!SINGLE_KEY) location.replace(`${list}?finished=${confirmed}`);
+  else if (confirmed) location.replace(`${list}?saved=${encodeURIComponent(SINGLE_KEY)}`);
+  else location.replace(`${list}?back=1`);   // Skip: nothing was saved, so say nothing
 }
 
 async function showCurrent() {
-  if (pos >= queue.length) { showEmpty(); return; }
+  if (pos >= queue.length) { finish(); return; }
   const r = await fetch(`{{ url_for("api_entry") }}?key=${encodeURIComponent(queue[pos])}`);
   current = await r.json();
   paint();
@@ -209,8 +215,15 @@ async function findMore() {
 }
 
 async function confirm() {
-  if (!current || !current.has_image || busy) return;
-  await post('{{ url_for("api_confirm") }}', {key: current.key});
+  if (!current || $('btn-confirm').disabled || busy) return;
+  busy = true;
+  let d;
+  try { d = await post('{{ url_for("api_confirm") }}', {key: current.key}); }
+  catch (e) { d = {ok: false, error: 'the dashboard did not answer.'}; }
+  busy = false;
+  // Moving on is what tells the user it saved, so a failure has to stay here.
+  if (!d.ok) { $('msg').textContent = 'Could not save this: ' + d.error; return; }
+  confirmed++;
   next();
 }
 function skip() { pos++; showCurrent(); }

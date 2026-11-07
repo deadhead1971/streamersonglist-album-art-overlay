@@ -23,15 +23,39 @@
   </div>
 
   <table class="songs">
-    <thead><tr><th>Art</th><th>Title</th><th>Artist</th><th>Status</th><th></th></tr></thead>
+    <thead><tr>
+      <th>Art</th>
+      <th><button type="button" class="th-sort" data-col="title">Title</button></th>
+      <th><button type="button" class="th-sort" data-col="artist">Artist</button></th>
+      <th>Status</th><th></th>
+    </tr></thead>
     <tbody id="rows"></tbody>
   </table>
 </div>
+<div id="toast" class="toast" role="status" hidden></div>
 
 <script>
 const statusEl = document.getElementById('status');
 const rowsEl = document.getElementById('rows');
 let allRows = [];
+
+// What the list looks like when a review sends the user back here.
+const ARRIVAL = new URLSearchParams(location.search);
+const SAVED_KEY = ARRIVAL.get('saved');
+const FINISHED = ARRIVAL.get('finished');
+const RETURNING = SAVED_KEY !== null || ARRIVAL.has('back');
+const VIEW_STORE = 'songs.view';
+const SORT_STORE = 'songs.sort';
+
+// A per-viewer convenience: with storage blocked the list still works, it just
+// forgets. Artist A-Z is the order the server sends.
+let sortBy = {col: 'artist', dir: 1};
+try {
+  const saved = JSON.parse(localStorage.getItem(SORT_STORE));
+  if (saved && ['artist', 'title'].includes(saved.col) && [1, -1].includes(saved.dir)) {
+    sortBy = saved;
+  }
+} catch (e) { /* keep the default */ }
 
 // Channel avatar, if the live service has resolved one (v2 API only). Fetched
 // from the status endpoint rather than rendered server-side so the page never
@@ -56,10 +80,35 @@ function needsArt(r) {
   return !(r.status === 'confirmed');
 }
 
+const titleOrder = new Intl.Collator(undefined, {sensitivity: 'base'});
+
+function sortedRows() {
+  if (sortBy.col === 'artist') {
+    return sortBy.dir > 0 ? allRows : [...allRows].reverse();
+  }
+  // Trimmed because SSL sends stray spaces, and a leading one would otherwise
+  // pull a title to the top of the list while looking perfectly normal.
+  const rows = [...allRows].sort((a, b) =>
+    titleOrder.compare((a.title || '').trim(), (b.title || '').trim())
+    || titleOrder.compare((a.artist || '').trim(), (b.artist || '').trim()));
+  return sortBy.dir > 0 ? rows : rows.reverse();
+}
+
+function paintSort() {
+  document.querySelectorAll('.th-sort').forEach(btn => {
+    const on = btn.dataset.col === sortBy.col;
+    const label = btn.dataset.col === 'title' ? 'Title' : 'Artist';
+    btn.textContent = label + (on ? (sortBy.dir > 0 ? ' ▲' : ' ▼') : '');
+    btn.classList.toggle('on', on);
+    btn.parentElement.setAttribute('aria-sort',
+      on ? (sortBy.dir > 0 ? 'ascending' : 'descending') : 'none');
+  });
+}
+
 function render() {
   const q = document.getElementById('search').value.toLowerCase();
   const onlyMissing = document.getElementById('only-missing').checked;
-  const filtered = allRows.filter(r => {
+  const filtered = sortedRows().filter(r => {
     if (onlyMissing && !needsArt(r)) return false;
     if (q && !(`${r.title} ${r.artist}`.toLowerCase().includes(q))) return false;
     return true;
@@ -67,6 +116,7 @@ function render() {
   rowsEl.innerHTML = '';
   for (const r of filtered) {
     const tr = document.createElement('tr');
+    tr.dataset.key = r.key;
     // The small cached copy, not the full image, and only once a row nears the
     // screen: the first visit then generates only the thumbnails it shows.
     const thumb = r.thumb_url
@@ -94,8 +144,68 @@ async function loadRows() {
   render();
 }
 
+function showToast(text) {
+  const el = document.getElementById('toast');
+  el.textContent = text;
+  el.hidden = false;
+  setTimeout(() => { el.hidden = true; }, 5000);
+}
+
+// Remember the filter and scroll position as the user leaves for a review, so
+// a return doesn't drop them at the top of the whole list.
+rowsEl.addEventListener('click', e => {
+  if (!e.target.closest('.review-link')) return;
+  try {
+    sessionStorage.setItem(VIEW_STORE, JSON.stringify({
+      q: document.getElementById('search').value,
+      onlyMissing: document.getElementById('only-missing').checked,
+      y: window.scrollY,
+    }));
+  } catch (err) { /* it just won't come back to the same place */ }
+});
+
+function takeSavedView() {
+  try {
+    const view = JSON.parse(sessionStorage.getItem(VIEW_STORE));
+    sessionStorage.removeItem(VIEW_STORE);
+    return view;
+  } catch (e) { return null; }
+}
+
+// Runs once the rows exist. The confirmed song can be missing from them - it
+// drops out of "Only songs needing art" - so the message has to stand alone.
+function announceArrival(view) {
+  if (view) window.scrollTo(0, view.y || 0);
+  if (SAVED_KEY !== null) {
+    const song = allRows.find(r => r.key === SAVED_KEY);
+    showToast(song ? `Saved: ${song.title}` : 'Saved.');
+    const row = [...rowsEl.children].find(tr => tr.dataset.key === SAVED_KEY);
+    if (row) {
+      const box = row.getBoundingClientRect();
+      if (box.top < 60 || box.bottom > window.innerHeight) {
+        row.scrollIntoView({block: 'center'});
+      }
+      row.classList.add('just-saved');
+    }
+  } else if (FINISHED !== null) {
+    const n = parseInt(FINISHED, 10) || 0;
+    showToast(n ? `Review finished: ${n} confirmed` : 'Review finished: nothing confirmed.');
+  }
+  // A refresh shouldn't announce the same save again.
+  if (location.search) history.replaceState(null, '', location.pathname);
+}
+
 document.getElementById('search').addEventListener('input', render);
 document.getElementById('only-missing').addEventListener('change', render);
+document.querySelectorAll('.th-sort').forEach(btn => btn.addEventListener('click', () => {
+  sortBy = {
+    col: btn.dataset.col,
+    dir: sortBy.col === btn.dataset.col ? -sortBy.dir : 1,
+  };
+  try { localStorage.setItem(SORT_STORE, JSON.stringify(sortBy)); } catch (e) {}
+  paintSort();
+  render();
+}));
 
 document.getElementById('sync-btn').addEventListener('click', async () => {
   statusEl.textContent = 'Syncing songlist…';
@@ -142,6 +252,15 @@ async function pollProgress() {
   }
 }
 
-loadRows();
+(async () => {
+  paintSort();
+  const view = RETURNING ? takeSavedView() : null;
+  if (view) {
+    document.getElementById('search').value = view.q || '';
+    document.getElementById('only-missing').checked = !!view.onlyMissing;
+  }
+  await loadRows();
+  announceArrival(view);
+})();
 </script>
 {% endblock %}
