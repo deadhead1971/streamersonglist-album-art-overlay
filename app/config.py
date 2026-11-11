@@ -158,6 +158,9 @@ DEFAULT_CONFIG = {
         # a full-width empty box. The empty-queue promo card is exempt, since
         # it shows alone and its message has to stay readable.
         "show_card": True,
+        # Card background opacity, 0-100. None = the preset's own (dark 82,
+        # light 88, glass 10); glass is capped at 40, minimal has no card.
+        "card_opacity": None,
         "font_size": 20,         # px, base text size
         "art_size": 56,          # px, artwork thumbnail square
         # px corner radius on the artwork. 0 is square; half of art_size or
@@ -178,6 +181,7 @@ DEFAULT_CONFIG = {
         "show_label": True,      # the small caption above the title
         "label_text": "Now playing",
         "preset": "dark",        # dark | light | minimal | glass
+        "card_opacity": None,    # 0-100, None = preset's own (see "overlay")
         "font_size": 26,         # px, title base size
         "art_size": 160,         # px, artwork square
         "accent": "#4da3ff",     # label / highlight colour

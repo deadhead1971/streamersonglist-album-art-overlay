@@ -113,6 +113,7 @@
           <em>minimal</em> with the card off — <em>light</em> and <em>glass</em>
           put a pale box round every cover, which rarely looks good with no
           text in it. Change either back if you want the box.</p>
+        {% with o = opts %}{% include "_card_opacity.html" %}{% endwith %}
         <div class="grid">
           <label>Font size (px) <input type="number" name="font_size" value="{{ opts.font_size }}" min="8" max="72"></label>
           <label>Art size (px) <input type="number" id="queue-art" name="art_size" value="{{ opts.art_size }}" min="16" max="300"></label>
@@ -144,7 +145,7 @@
         <code>?max=3&amp;current=0&amp;preset=glass</code>.</p>
     </form>
 
-    <div class="overlay-preview">
+    <div class="overlay-preview preview-sticky">
       <h2>Preview</h2>
       <p class="muted preview-hint">Your queue is empty — add a few songs
         on StreamerSonglist and they'll show up here.</p>
@@ -216,6 +217,38 @@
   </div>
 
   <div class="overlay-layout overlay-layout-stacked">
+    {# First, so it can pin above the form it previews. #}
+    <div class="overlay-preview preview-sticky">
+      <h2>Preview</h2>
+      <p class="muted preview-hint">Your queue is empty — add a few songs
+        on StreamerSonglist and they'll show up here.</p>
+      <div class="preview-stage">
+        <iframe id="current-preview" src="{{ url_for('overlay_current_page') }}"
+                title="Now-playing preview"></iframe>
+      </div>
+      <div class="preview-size">
+        <span>OBS source size</span>
+        <input type="number" id="current-size-w" min="100" max="4096" step="10"
+               aria-label="Source width">
+        <span>×</span>
+        <input type="number" id="current-size-h" min="100" max="4096" step="10"
+               aria-label="Source height">
+        <span id="current-scale-note"></span>
+      </div>
+      <div class="preview-dirty" id="current-dirty" hidden>
+        <span><strong>Preview only.</strong> These changes aren't saved yet —
+          OBS is still showing your saved settings.</span>
+        <button type="submit" form="current-form" class="primary">Save</button>
+      </div>
+      <label>Preview the empty-queue card
+        <select class="promo-demo" data-frame="current-preview">
+          <option value="">off</option>
+          <option value="open">as if requests are open</option>
+          <option value="closed">as if requests are closed</option>
+        </select></label>
+      <p class="muted">Shows the song at the top of your live queue. If the
+        queue is empty and the card is set to hide, the preview will be blank.</p>
+    </div>
     <form method="post" action="{{ url_for('save_overlay_current_settings') }}" class="form"
           id="current-form">
       <fieldset>
@@ -259,6 +292,7 @@
             <option value="{{ p }}" {{ 'selected' if cur_opts.preset == p }}>{{ p }}</option>
             {% endfor %}
           </select></label>
+        {% with o = cur_opts %}{% include "_card_opacity.html" %}{% endwith %}
         <div class="grid">
           <label>Font size (px) <input type="number" name="font_size" value="{{ cur_opts.font_size }}" min="8" max="96"></label>
           <label>Art size (px) <input type="number" name="art_size" value="{{ cur_opts.art_size }}" min="32" max="600"></label>
@@ -285,37 +319,6 @@
         <code>?layout=vertical&amp;art_size=240&amp;preset=glass</code>.</p>
     </form>
 
-    <div class="overlay-preview">
-      <h2>Preview</h2>
-      <p class="muted preview-hint">Your queue is empty — add a few songs
-        on StreamerSonglist and they'll show up here.</p>
-      <div class="preview-stage">
-        <iframe id="current-preview" src="{{ url_for('overlay_current_page') }}"
-                title="Now-playing preview"></iframe>
-      </div>
-      <div class="preview-size">
-        <span>OBS source size</span>
-        <input type="number" id="current-size-w" min="100" max="4096" step="10"
-               aria-label="Source width">
-        <span>×</span>
-        <input type="number" id="current-size-h" min="100" max="4096" step="10"
-               aria-label="Source height">
-        <span id="current-scale-note"></span>
-      </div>
-      <div class="preview-dirty" id="current-dirty" hidden>
-        <span><strong>Preview only.</strong> These changes aren't saved yet —
-          OBS is still showing your saved settings.</span>
-        <button type="submit" form="current-form" class="primary">Save</button>
-      </div>
-      <label>Preview the empty-queue card
-        <select class="promo-demo" data-frame="current-preview">
-          <option value="">off</option>
-          <option value="open">as if requests are open</option>
-          <option value="closed">as if requests are closed</option>
-        </select></label>
-      <p class="muted">Shows the song at the top of your live queue. If the
-        queue is empty and the card is set to hide, the preview will be blank.</p>
-    </div>
   </div>
 </div>
 
@@ -664,6 +667,69 @@
   update();
 })();
 
+// Card opacity, one slider per overlay form. The saved value lives in the
+// hidden input: "auto" (the preset's own alpha, so the slider follows the
+// preset) or a number the user picked. The range itself is unnamed, so the
+// unsaved-changes check and the preview both see only the hidden value. The
+// glass cap is display-only here — the server enforces it — so a 100 picked
+// on dark survives a trip through glass and back.
+(function () {
+  const DEFAULTS = {{ opacity_defaults | tojson }};
+  const MAX = {{ opacity_max | tojson }};
+  document.querySelectorAll('[data-opacity]').forEach(box => {
+    const form = box.closest('form');
+    const preset = form && form.querySelector('[name="preset"]');
+    const card = form.querySelector('[name="show_card"]');
+    const range = box.querySelector('[data-opacity-range]');
+    const hidden = box.querySelector('[name="card_opacity"]');
+    const readout = box.querySelector('[data-opacity-readout]');
+    const note = box.querySelector('[data-opacity-note]');
+    const reset = box.querySelector('[data-opacity-reset]');
+    if (!preset || !range || !hidden) return;
+
+    function sync() {
+      const p = preset.value;
+      const custom = hidden.value !== 'auto';
+      if (!(p in DEFAULTS)) {
+        range.disabled = true;
+        readout.textContent = '';
+        reset.hidden = true;
+        note.textContent = 'Minimal has no card, so there is nothing to set.';
+        return;
+      }
+      const max = p in MAX ? MAX[p] : 100;
+      const picked = parseInt(hidden.value, 10);
+      const v = custom && !isNaN(picked) ? Math.min(picked, max) : DEFAULTS[p];
+      range.disabled = false;
+      range.max = max;
+      range.value = v;
+      readout.textContent = v + '%' + (custom ? '' : ' (preset default)');
+      reset.hidden = !custom;
+      const notes = [];
+      if (p in MAX)
+        notes.push('Glass is capped at ' + max + '%: its text is white, and a '
+          + 'paler box washes it out.');
+      if (card && !card.checked)
+        notes.push('With the card off, this only affects the empty-queue card.');
+      note.textContent = notes.join(' ');
+    }
+
+    range.addEventListener('input', () => { hidden.value = range.value; sync(); });
+    reset.addEventListener('click', () => {
+      hidden.value = 'auto';
+      sync();
+      // A programmatic change fires nothing, and the preview and the unsaved
+      // warning both listen on the form.
+      form.dispatchEvent(new Event('change'));
+    });
+    // On the form rather than the preset select: the artwork-only steer above
+    // sets the preset in code, which fires no event of its own, and runs from
+    // a listener that sits below the form.
+    form.addEventListener('change', sync);
+    sync();
+  });
+})();
+
 // Sort direction only means something once there is an order to run in one.
 (function () {
   const order = document.getElementById('wall-order');
@@ -760,6 +826,7 @@
   const PANELS = [
     {
       form: 'queue-form', frame: 'preview', dirty: 'queue-dirty', live: true,
+      fit: true,
       size: { key: 'queue', w: 500, h: 800 },
       bools: {
         include_current: 'current', show_artwork: 'art', show_position: 'position',
@@ -770,12 +837,12 @@
         max_songs: 'max', direction: 'dir', preset: 'preset',
         font_size: 'font_size', art_size: 'art_size', art_radius: 'art_radius',
         row_gap: 'row_gap', accent: 'accent', animation: 'anim',
-        anim_speed: 'speed'
+        anim_speed: 'speed', card_opacity: 'bg'
       }
     },
     {
       form: 'current-form', frame: 'current-preview', dirty: 'current-dirty',
-      live: true,
+      live: true, fit: true,
       size: { key: 'current', w: 900, h: 220 },
       bools: {
         show_artwork: 'art', show_label: 'label', show_title: 'title',
@@ -785,7 +852,7 @@
       values: {
         layout: 'layout', label_text: 'label_text', preset: 'preset',
         font_size: 'font_size', art_size: 'art_size', accent: 'accent',
-        animation: 'anim', anim_speed: 'speed'
+        animation: 'anim', anim_speed: 'speed', card_opacity: 'bg'
       },
       // Saving an empty label falls back to "Now playing", and the override is
       // ignored when blank — so without this, clearing the box would leave the
@@ -847,6 +914,14 @@
       return (n >= 100 && n <= 4096) ? n : fallback;
     };
 
+    // Source px the overlay is actually drawing in, measured inside the frame
+    // (spec.fit only). A queue of three songs uses the top 250px of an 800px
+    // source; showing all 800 pushed every control below the fold, away from
+    // the picture it changes. Trimming keeps the true scale — only the empty
+    // part below the content is dropped, which is transparent in OBS anyway.
+    let used = null;
+    const FIT_MIN = 120;   // so an empty overlay still reads as a preview
+
     function rescale() {
       const w = clampPx(wIn.value, spec.size.w);
       const h = clampPx(hIn.value, spec.size.h);
@@ -856,10 +931,38 @@
       // preview bigger than the source is the same lie in the other direction.
       const scale = Math.min(1, stage.clientWidth / w);
       frame.style.setProperty('--preview-scale', scale);
-      stage.style.height = Math.round(h * scale) + 'px';
-      note.textContent = scale >= 1
+      const shown = used == null ? h : Math.min(h, Math.max(used, FIT_MIN));
+      stage.style.height = Math.round(shown * scale) + 'px';
+      let text = scale >= 1
         ? 'shown at actual size'
         : 'shown at ' + Math.round(scale * 100) + '%';
+      if (used != null && used > h)
+        text += ' — the overlay is ' + used + 'px tall, so OBS cuts off the'
+          + ' bottom of it at ' + h + 'px';
+      else if (shown < h)
+        text += ', top ' + shown + 'px of ' + h;
+      note.textContent = text;
+    }
+
+    // The frame is same-origin, so watch its body directly. The observer has
+    // to come from the frame's own window, and a reload is a new document, so
+    // it is re-attached on every load.
+    function watchContent() {
+      const win = frame.contentWindow;
+      const body = frame.contentDocument && frame.contentDocument.body;
+      if (!win || !body || !win.ResizeObserver) return;
+      new win.ResizeObserver(() => {
+        used = Math.ceil(body.getBoundingClientRect().height);
+        rescale();
+      }).observe(body);
+    }
+    if (spec.fit) {
+      frame.addEventListener('load', watchContent);
+      // Already loaded before this ran. Before its first load a frame holds
+      // an about:blank document that also reads "complete" — skip that one.
+      const doc = frame.contentDocument;
+      if (doc && doc.readyState === 'complete' && doc.URL !== 'about:blank')
+        watchContent();
     }
 
     if (stage && wIn && hIn && note) {

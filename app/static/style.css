@@ -239,6 +239,32 @@ body.queue-empty .preview-hint { display: block; }
   transform: scale(var(--preview-scale, 1));
 }
 .overlay-layout-stacked { grid-template-columns: 1fr; }
+/* Height animates because the preview trims itself to the part of the source
+   the overlay is using (see `fit` in the preview script), and that changes as
+   rows come and go. */
+.preview-stage { transition: height .2s ease; }
+
+/* A live preview pins under the topbar and subnav (112px, as for
+   .panel[id] below) so whatever you edit further down the form is still in
+   view beside its result. Its parent is the layout grid, which spans the whole
+   form, so it lets go once the form ends. max-height keeps an unusually tall
+   preview usable: it scrolls in place rather than running off the bottom. */
+.preview-sticky {
+  position: sticky; top: 112px; z-index: 5; align-self: start;
+  max-height: calc(100vh - 112px - 60px); overflow-y: auto;
+  background: var(--panel);
+}
+/* Stacked, the form scrolls up underneath it, so it needs an edge. A single
+   column on a narrow window is stacked too, and only pins usefully if it
+   comes first. */
+.overlay-layout-stacked > .preview-sticky {
+  padding-bottom: 12px; border-bottom: 1px solid var(--line);
+}
+@media (max-width: 900px) {
+  .overlay-layout > .preview-sticky {
+    order: -1; padding-bottom: 12px; border-bottom: 1px solid var(--line);
+  }
+}
 
 /* The source size that scaling is against. Not an overlay setting — it changes
    nothing OBS reads — so it lives beside the picture, not in the form. */
@@ -306,6 +332,13 @@ body.queue-empty .preview-hint { display: block; }
   padding: 8px 10px; border-radius: 8px; width: 100%; margin-top: 5px;
 }
 .form input[type=color] { padding: 3px; height: 38px; }
+.form input[type=range] { width: 100%; accent-color: var(--accent); }
+.form input[type=range]:disabled { opacity: .45; }
+.opacity-control > label { margin-bottom: 0; }
+.opacity-control > p { margin: 2px 0 10px; font-size: 13px; }
+.opacity-readout { color: var(--text); margin-left: 4px; }
+button.link-btn { background: none; border: none; padding: 0; color: var(--accent);
+  font-size: inherit; text-decoration: underline; cursor: pointer; }
 
 /* Ko-fi footer */
 .kofi-footer { display: flex; align-items: center; justify-content: center; gap: 12px;
