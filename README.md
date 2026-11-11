@@ -209,7 +209,10 @@ The dashboard also serves an **up-next table** for OBS: your queue with
 artwork, title, artist and requester. Open the **Overlay** page in the
 dashboard to style it (presets, fields, sizes, how many songs) with a live
 preview, then copy the URL into an OBS **Browser** source. The background is
-transparent; style changes apply within seconds without touching OBS.
+transparent; style changes apply within seconds without touching OBS. Each
+overlay has a **Card opacity** slider: slide it to 100% for a solid box, or
+down to let more of the scene show through. The glass preset tops out at 40%,
+because its white text stops being readable past that.
 
 ![The Overlay settings page with live queue preview](docs/screenshots/queue-overlay.png)
 

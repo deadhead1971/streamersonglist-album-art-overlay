@@ -1,0 +1,12 @@
+{# Card opacity control, shared by both overlay forms. Expects `o`, that
+   overlay's effective options. Driven by the card-opacity script in
+   overlay_settings.html. #}
+<div class="opacity-control" data-opacity>
+  <label>Card opacity <span class="opacity-readout" data-opacity-readout></span>
+    <input type="range" min="0" max="100" step="1" data-opacity-range></label>
+  <input type="hidden" name="card_opacity"
+         value="{{ 'auto' if o.card_opacity is none else o.card_opacity }}">
+  <p class="muted"><span data-opacity-note></span>
+    <button type="button" class="link-btn" data-opacity-reset hidden>Use the
+      preset's default</button></p>
+</div>

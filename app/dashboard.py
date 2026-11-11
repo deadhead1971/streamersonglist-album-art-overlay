@@ -975,6 +975,41 @@ _OVERLAY_ANIMATIONS = ("slide", "fade", "none")
 _OVERLAY_SPEEDS = ("normal", "fast")
 _OVERLAY_DIRECTIONS = ("column", "row")
 
+# Card background opacity, in percent. Each preset has always drawn its card at
+# its own alpha, and those stay the defaults: a saved ``card_opacity`` of None
+# means "whatever the preset uses", so existing configs render unchanged and
+# switching preset still lands on that preset's look. Minimal has no card, so
+# it has no entry. Glass is capped because its text is white on a white tint —
+# past ~40% the box washes the text out over anything but a dark scene.
+CARD_OPACITY_DEFAULTS = {"dark": 82, "light": 88, "glass": 10}
+CARD_OPACITY_MAX = {"glass": 40}
+
+
+def _parse_card_opacity(value):
+    """A form/query value -> 0..100, or None for "preset default"/unreadable."""
+    if value is None or value == "" or value == "auto":
+        return None
+    try:
+        return min(100, max(0, int(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def card_alpha(preset: str, card_opacity):
+    """
+    The alpha the overlay page draws its card at, or None for no card.
+
+    Resolved here, not in the page, so the glass cap holds for a hand-edited
+    config and a hand-typed ``?bg=`` alike.
+    """
+    if preset not in CARD_OPACITY_DEFAULTS:
+        return None
+    pct = _parse_card_opacity(card_opacity)
+    if pct is None:
+        pct = CARD_OPACITY_DEFAULTS[preset]
+    pct = min(pct, CARD_OPACITY_MAX.get(preset, 100))
+    return round(pct / 100, 2)
+
 # The fields that make a row more than a cover. Whether any of them is on is
 # what "artwork only" means, and two rules key off it (see overlay_options).
 _OVERLAY_TEXT_KEYS = ("show_title", "show_artist", "show_requester")
@@ -1029,6 +1064,13 @@ def _merge_overlay_options(cfg: dict, args, section: str,
         opts["anim_speed"] = args.get("speed")
     if args.get("accent"):
         opts["accent"] = args.get("accent")
+    # ?bg=0-100, or ?bg=auto for the preset's own value — the settings preview
+    # needs "auto" to show a reset before it is saved.
+    if "bg" in args:
+        opts["card_opacity"] = _parse_card_opacity(args.get("bg"))
+    else:
+        opts["card_opacity"] = _parse_card_opacity(opts.get("card_opacity"))
+    opts["card_alpha"] = card_alpha(opts["preset"], opts["card_opacity"])
     return opts
 
 
@@ -1533,6 +1575,8 @@ def overlay_settings_page():
                            wall_filters=_WALL_FILTERS, wall_orders=_WALL_ORDERS,
                            wall_axes=_WALL_AXES,
                            overlay_url=overlay_url, presets=_OVERLAY_PRESETS,
+                           opacity_defaults=CARD_OPACITY_DEFAULTS,
+                           opacity_max=CARD_OPACITY_MAX,
                            animations=_OVERLAY_ANIMATIONS, speeds=_OVERLAY_SPEEDS)
 
 
@@ -1561,6 +1605,7 @@ def save_overlay_settings():
                          else "column")
     preset = form.get("preset", "dark")
     opts["preset"] = preset if preset in _OVERLAY_PRESETS else "dark"
+    opts["card_opacity"] = _parse_card_opacity(form.get("card_opacity"))
     animation = form.get("animation", "slide")
     opts["animation"] = animation if animation in _OVERLAY_ANIMATIONS else "slide"
     speed = form.get("anim_speed", "normal")
@@ -1589,6 +1634,7 @@ def save_overlay_current_settings():
     opts["layout"] = layout if layout in _CURRENT_LAYOUTS else "horizontal"
     preset = form.get("preset", "dark")
     opts["preset"] = preset if preset in _OVERLAY_PRESETS else "dark"
+    opts["card_opacity"] = _parse_card_opacity(form.get("card_opacity"))
     animation = form.get("animation", "fade")
     opts["animation"] = animation if animation in _OVERLAY_ANIMATIONS else "fade"
     speed = form.get("anim_speed", "normal")

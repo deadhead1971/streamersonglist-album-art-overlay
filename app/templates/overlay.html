@@ -71,15 +71,18 @@
   .row.promo .title, .row.promo .artist { white-space: normal; overflow: visible; }
   .row.promo .meta { max-width: 18em; }
 
-  /* Presets */
-  body.p-dark .row { background: rgba(12,12,16,.82); color: #f2f2f2;
+  /* Presets. --card-alpha is the card opacity setting, resolved (and capped
+     for glass) by the server; unset, each preset keeps its own value. It
+     tints the background only — `opacity` would fade the text and cover too,
+     and is what the enter/exit transitions animate. */
+  body.p-dark .row { background: rgba(12,12,16,var(--card-alpha,.82)); color: #f2f2f2;
                      box-shadow: 0 2px 8px rgba(0,0,0,.35); }
-  body.p-light .row { background: rgba(250,250,252,.88); color: #16161a;
+  body.p-light .row { background: rgba(250,250,252,var(--card-alpha,.88)); color: #16161a;
                       box-shadow: 0 2px 8px rgba(0,0,0,.2); }
   body.p-minimal .row { background: none; color: #fff; padding: 0.15em 0;
                         text-shadow: 0 1px 4px rgba(0,0,0,.9),
                                      0 0 12px rgba(0,0,0,.6); }
-  body.p-glass .row { background: rgba(255,255,255,.10); color: #fff;
+  body.p-glass .row { background: rgba(255,255,255,var(--card-alpha,.10)); color: #fff;
                       backdrop-filter: blur(10px);
                       -webkit-backdrop-filter: blur(10px);
                       border: 1px solid rgba(255,255,255,.18);
@@ -170,6 +173,8 @@
     document.body.style.setProperty(
       "--art-radius", (o.art_radius == null ? 6 : o.art_radius) + "px");
     queueEl.style.gap = o.row_gap + "px";
+    if (o.card_alpha == null) document.body.style.removeProperty("--card-alpha");
+    else document.body.style.setProperty("--card-alpha", o.card_alpha);
   }
 
   const wait = ms => new Promise(r => setTimeout(r, ms));

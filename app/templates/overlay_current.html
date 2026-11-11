@@ -95,10 +95,10 @@
      unreadable — and the art centres itself above it. */
   body.l-vertical .card.promo { width: auto; min-width: var(--art); }
 
-  /* Presets */
-  body.p-dark .card { background: rgba(12,12,16,.82); color: #f2f2f2;
+  /* Presets. --card-alpha: see overlay.html. */
+  body.p-dark .card { background: rgba(12,12,16,var(--card-alpha,.82)); color: #f2f2f2;
                       box-shadow: 0 2px 8px rgba(0,0,0,.35); }
-  body.p-light .card { background: rgba(250,250,252,.88); color: #16161a;
+  body.p-light .card { background: rgba(250,250,252,var(--card-alpha,.88)); color: #16161a;
                        box-shadow: 0 2px 8px rgba(0,0,0,.2); }
   /* Minimal has no card surface — nothing to inset against — so it drops the
      padding entirely, the art keeps its own radius and the text column drops
@@ -110,7 +110,7 @@
   body.p-minimal .art { border-radius: 10px; }
   body.p-minimal .meta { padding: 0 .4em 0 .8em; }
   body.p-minimal.l-vertical .meta { padding: .45em .1em 0; }
-  body.p-glass .card { background: rgba(255,255,255,.10); color: #fff;
+  body.p-glass .card { background: rgba(255,255,255,var(--card-alpha,.10)); color: #fff;
                        backdrop-filter: blur(10px);
                        -webkit-backdrop-filter: blur(10px);
                        border: 1px solid rgba(255,255,255,.18);
@@ -182,6 +182,8 @@
     document.body.style.fontSize = o.font_size + "px";
     document.body.style.setProperty("--art", o.art_size + "px");
     document.body.style.setProperty("--dur", (Math.max(d.exit, d.enter) / 1000) + "s");
+    if (o.card_alpha == null) document.body.style.removeProperty("--card-alpha");
+    else document.body.style.setProperty("--card-alpha", o.card_alpha);
   }
 
   const wait = ms => new Promise(r => setTimeout(r, ms));
